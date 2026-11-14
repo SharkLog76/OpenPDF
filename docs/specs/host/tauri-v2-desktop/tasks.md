@@ -1,0 +1,13 @@
+# Tasks — Encapsulation Desktop Windows Tauri v2 (`host/tauri-v2-desktop`)
+
+- [x] Installer les prérequis approuvés (`Rustlang.Rustup` : `rustup 1.29.3`, `rustc 1.100.0`, `cargo 1.100.0` ; `Microsoft.VisualStudio.2022.BuildTools` VCTools détecté à `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`).
+- [x] Installer `@tauri-apps/cli`, `@tauri-apps/api`, `@tauri-apps/plugin-dialog` et ajouter les scripts `tauri`, `tauri:dev`, `tauri:build` dans `package.json`.
+- [x] Créer `src-tauri/` (`Cargo.toml`, `build.rs`, `tauri.conf.json`, `capabilities/default.json`, `icons/`) avec association `.pdf` et cibles Windows (`nsis`, `msi`).
+- [x] Implémenter et tester en Rust (`src-tauri/src/pdf_io.rs` + `src-tauri/src/lib.rs`) `get_launch_pdf_args`, `read_pdf_file_bounded` et `write_pdf_atomic` (`cargo test` : 3/3 passés).
+- [x] Étendre `FileOriginHandle` (`tauri-path` + `hasWritableDiskOrigin`) dans `src/providers/filesystem/boundedFileSystem.ts`, adapter `AcrobatMenuBar.tsx` et créer `src/adapters/host/tauriBridge.ts`.
+- [x] Connecter `src/adapters/ui/App.tsx` au pont Tauri (ouverture native, drop fichier Tauri, écrasement atomique, sauvegarde nouvelle version, export sous Tauri, ouverture CLI au lancement, synchronisation titre fenêtre).
+- [x] Vérifier les tests unitaires Rust (`cargo test` : 3 tests passés), les tests TypeScript (`tests/tauri-bridge.test.ts` : 9 tests passés, suite Vitest : 32/32 passés), puis générer le build Windows (`npm.cmd run tauri:build` -> `openpdf.exe`, installeur NSIS et installeur MSI).
+- [x] Renommer le binaire et l'identifiant Tauri en **OpenPDF** (`openpdf.exe`, `fr.openpdf.desktop`), intégrer `tauri-plugin-single-instance`, `window_manager.rs`, `default_pdf.rs` et `write_binary_file_atomic`.
+- [x] Configurer l'installeur NSIS sans élévation (`"installMode": "currentUser"`, `$LOCALAPPDATA\OpenPDF`) avec template personnalisé `src-tauri/installer/openpdf.nsi` proposant les cases à cocher **Bureau**, **Menu Démarrer** et **association `.pdf` HKCU**.
+- [x] Revalider la suite complète (`cargo test` : 8 tests passés, Vitest : 8 fichiers / 47 tests passés) et recompiler les paquets Windows (`openpdf.exe`, `OpenPDF_0.1.0_x64-setup.exe`, `OpenPDF_0.1.0_x64_en-US.msi`).
+- [x] Passer les commandes de création/fermeture de fenêtres et d'E/S Tauri en `async` (`spawn_blocking`) pour éviter le deadlock COM STA WebView2 au détachement d'onglets, incrémenter la version en **0.1.1**, et ajouter le mode mise à jour directe (`InPlaceUpdateMode` + mémorisation des préférences de raccourcis) dans `src-tauri/installer/openpdf.nsi` puis recompiler (`OpenPDF_0.1.1_x64-setup.exe`, `OpenPDF_0.1.1_x64_en-US.msi`).

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenPDF",
+  "version": "0.1.1",
+  "identifier": "fr.openpdf.desktop",
+  "build": {
+    "beforeDevCommand": "npm.cmd run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm.cmd run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OpenPDF — Studio PDF Local-First",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "publisher": "OpenPDF",
+    "shortDescription": "OpenPDF — Lecteur, éditeur, convertisseur et signataire PDF local-first",
+    "targets": ["nsis", "msi"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["pdf"],
+        "name": "OpenPDF.Document",
+        "description": "Document PDF OpenPDF",
+        "mimeType": "application/pdf",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["French", "English"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "OpenPDF",
+        "template": "installer/openpdf.nsi"
+      }
+    }
+  }
+}

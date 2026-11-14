@@ -1,0 +1,191 @@
+/**
+ * Boundary Admission Limits & Format Magic-Byte Validators (Single Canonical Owner).
+ */
+import { err, ok, type Result } from '../domain/result.ts';
+import type { DomainError } from './errors.ts';
+
+export const ADMISSION_LIMITS = {
+  MAX_PDF_BYTES: 256 * 1024 * 1024, // 256 MiB
+  MAX_MERGE_TOTAL_BYTES: 512 * 1024 * 1024, // 512 MiB
+  MAX_EMBED_IMAGE_BYTES: 25 * 1024 * 1024, // 25 MiB
+  MAX_SIGNATURE_IMAGE_BYTES: 5 * 1024 * 1024, // 5 MiB
+  MAX_CERT_BYTES: 1 * 1024 * 1024, // 1 MiB
+  MAX_RENDER_CACHE_PAGES: 12,
+  MAX_LEDGER_HISTORY: 200,
+} as const;
+
+export type DetectedImageFormat = 'png' | 'jpeg' | 'webp' | 'svg';
+
+/**
+ * Validates that raw bytes represent a PDF header ("%PDF-") within the first 1024 bytes
+ * per ISO 32000-1 and do not exceed the PDF admission byte budget.
+ */
+export function validatePdfAdmission(
+  bytes: Uint8Array,
+  maxBytes: number = ADMISSION_LIMITS.MAX_PDF_BYTES
+): Result<{ readonly headerVersion: string | null }, DomainError> {
+  if (bytes.byteLength === 0) {
+    return err({
+      code: 'EmptyFile',
+      message: 'Le fichier sélectionné est vide (0 octet).',
+    });
+  }
+  if (bytes.byteLength > maxBytes) {
+    return err({
+      code: 'FileTooLarge',
+      message: `Le fichier PDF dépasse le budget d'admission (${Math.round(bytes.byteLength / (1024 * 1024))} Mo > ${Math.round(maxBytes / (1024 * 1024))} Mo).`,
+      byteLength: bytes.byteLength,
+      maxBytes,
+    });
+  }
+
+  const scanLimit = Math.min(bytes.byteLength, 1024);
+  const needle = [0x25, 0x50, 0x44, 0x46, 0x2d]; // %PDF-
+  let foundAt = -1;
+
+  for (let i = 0; i <= scanLimit - needle.length; i++) {
+    if (
+      bytes[i] === needle[0] &&
+      bytes[i + 1] === needle[1] &&
+      bytes[i + 2] === needle[2] &&
+      bytes[i + 3] === needle[3] &&
+      bytes[i + 4] === needle[4]
+    ) {
+      foundAt = i;
+      break;
+    }
+  }
+
+  if (foundAt === -1) {
+    return err({
+      code: 'InvalidPdfHeader',
+      message: 'En-tête %PDF- introuvable dans les 1024 premiers octets. Ce fichier n’est pas un PDF valide.',
+    });
+  }
+
+  // Extract up to 5 bytes after "%PDF-" e.g. "1.7" or "2.0"
+  let versionStr = '';
+  for (let j = foundAt + 5; j < Math.min(bytes.byteLength, foundAt + 12); j++) {
+    const ch = bytes[j];
+    if (ch === 0x0a || ch === 0x0d || ch === 0x20) break;
+    versionStr += String.fromCharCode(ch);
+  }
+  const headerVersion = /^\d+\.\d+$/.test(versionStr) ? versionStr : null;
+
+  return ok({ headerVersion });
+}
+
+/**
+ * Inspects magic bytes of an image or signature file (never trusting file extension alone).
+ */
+export function detectImageFormat(
+  bytes: Uint8Array,
+  maxBytes: number = ADMISSION_LIMITS.MAX_SIGNATURE_IMAGE_BYTES
+): Result<DetectedImageFormat, DomainError> {
+  if (bytes.byteLength === 0) {
+    return err({ code: 'EmptyFile', message: 'Le fichier image est vide.' });
+  }
+  if (bytes.byteLength > maxBytes) {
+    return err({
+      code: 'SignatureImageTooLarge',
+      message: `Le fichier signature dépasse le budget autorisé (${Math.round(maxBytes / (1024 * 1024))} Mo).`,
+      byteLength: bytes.byteLength,
+      maxBytes,
+    });
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes.byteLength >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return ok('png');
+  }
+
+  // JPEG: FF D8 FF
+  if (bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return ok('jpeg');
+  }
+
+  // WebP: RIFF....WEBP
+  if (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return ok('webp');
+  }
+
+  // SVG: XML/UTF-8 text containing <svg
+  const headText = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, Math.min(bytes.byteLength, 2048)));
+  if (/<svg[\s>]/i.test(headText)) {
+    return ok('svg');
+  }
+
+  return err({
+    code: 'UnsupportedSignatureFileFormat',
+    message: 'Format de fichier signature non pris en charge (formats admis : PNG, SVG, JPEG, WebP).',
+  });
+}
+
+/**
+ * Parses a 1-based page range expression such as "1-3, 5, 7-9" into sorted unique 0-based page indices.
+ */
+export function parsePageRangeExpression(expr: string, totalPages: number): Result<number[], DomainError> {
+  const trimmed = expr.trim();
+  if (!trimmed) {
+    return err({ code: 'InvalidPageRange', message: 'Veuillez indiquer une plage de pages (ex: 1-3, 5).' });
+  }
+  const indices = new Set<number>();
+  const parts = trimmed.split(',');
+  for (const part of parts) {
+    const token = part.trim();
+    if (!token) continue;
+    const rangeMatch = /^(\d+)\s*-\s*(\d+)$/.exec(token);
+    if (rangeMatch) {
+      const start = Number(rangeMatch[1]);
+      const end = Number(rangeMatch[2]);
+      if (start < 1 || end < start || end > totalPages) {
+        return err({
+          code: 'InvalidPageRange',
+          message: `Plage invalide "${token}" pour un document de ${totalPages} page(s).`,
+        });
+      }
+      for (let p = start; p <= end; p++) indices.add(p - 1);
+      continue;
+    }
+    if (/^\d+$/.test(token)) {
+      const p = Number(token);
+      if (p < 1 || p > totalPages) {
+        return err({
+          code: 'InvalidPageRange',
+          message: `Numéro de page ${p} hors limites (1 à ${totalPages}).`,
+        });
+      }
+      indices.add(p - 1);
+      continue;
+    }
+    return err({
+      code: 'InvalidPageRange',
+      message: `Syntaxe de plage invalide : "${token}". Utilisez par exemple "1-3, 5".`,
+    });
+  }
+
+  if (indices.size === 0) {
+    return err({ code: 'InvalidPageRange', message: 'Aucune page valide sélectionnée.' });
+  }
+  return ok(Array.from(indices).sort((a, b) => a - b));
+}

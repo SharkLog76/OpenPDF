@@ -1,0 +1,70 @@
+graph TD
+    subgraph "Adapters Layer (UI & Host)"
+        UI["src/adapters/ui/<br/>Viewer Canvas, Toolbars, Thumbnails, Signature Pad, Dialogs"]
+        CLI_HOST["src/adapters/host/<br/>Desktop Bridge (Tauri/Electron) or Browser File Access"]
+    end
+
+    subgraph "Application Layer (Workflows & State)"
+        SESSION["src/application/session/<br/>Document Session Lifecycle, Cache Invalidation"]
+        LEDGER["src/application/ledger/<br/>Deterministic Command Ledger (Undo / Redo)"]
+        VIEW_WF["src/application/viewer/<br/>Viewport Virtualization, Search, Outlines"]
+        EDIT_WF["src/application/editor/<br/>Annotations, Text, Page Ops, AcroForm"]
+        SIGN_WF["src/application/signing/<br/>Signature Vault, Placement, Sign & Verify"]
+    end
+
+    subgraph "Contracts Layer (Boundaries)"
+        CONTRACTS["src/contracts/<br/>Zod/Typed Input-Output Schemas, Action Contracts"]
+        ERRORS["src/contracts/errors.ts<br/>Tagged Error Algebra & Recovery Guidance"]
+    end
+
+    subgraph "Providers Layer (Engines & I/O)"
+        RENDERER["src/providers/renderer/<br/>PDF Render Adapter (PDF.js / PDFium)"]
+        MUTATOR["src/providers/mutator/<br/>PDF Structural Mutator (pdf-lib / Serializer)"]
+        CRYPTO["src/providers/crypto/<br/>PKCS#7 / X.509 / WebCrypto / Image Normalization"]
+        FS["src/providers/filesystem/<br/>Bounded File Admission, Atomic Staging, SHA-256"]
+    end
+
+    subgraph "Domain Layer (Pure, Side-Effect Free)"
+        DOMAIN["src/domain/<br/>Document Model, Page Tree, Edit Commands, Signature Envelope, Result<T, E>"]
+    end
+
+    UI --> SESSION
+    UI --> VIEW_WF
+    UI --> EDIT_WF
+    UI --> SIGN_WF
+    UI --> CLI_HOST
+    CLI_HOST --> CONTRACTS
+
+    SESSION --> CONTRACTS
+    SESSION --> FS
+    SESSION --> DOMAIN
+    VIEW_WF --> SESSION
+    VIEW_WF --> RENDERER
+    VIEW_WF --> CONTRACTS
+    VIEW_WF --> DOMAIN
+
+    EDIT_WF --> SESSION
+    EDIT_WF --> LEDGER
+    EDIT_WF --> MUTATOR
+    EDIT_WF --> CONTRACTS
+    EDIT_WF --> DOMAIN
+
+    SIGN_WF --> SESSION
+    SIGN_WF --> LEDGER
+    SIGN_WF --> MUTATOR
+    SIGN_WF --> CRYPTO
+    SIGN_WF --> FS
+    SIGN_WF --> CONTRACTS
+    SIGN_WF --> DOMAIN
+
+    LEDGER --> DOMAIN
+    CONTRACTS --> DOMAIN
+    ERRORS --> DOMAIN
+    RENDERER --> CONTRACTS
+    RENDERER --> DOMAIN
+    MUTATOR --> CONTRACTS
+    MUTATOR --> DOMAIN
+    CRYPTO --> CONTRACTS
+    CRYPTO --> DOMAIN
+    FS --> ERRORS
+    FS --> DOMAIN
