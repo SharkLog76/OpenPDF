@@ -12,6 +12,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 | **REQ-20261114-02** | 2026-11-14 | Mise en place de la gouvernance projet & documentation d'architecture détaillée | COMPLÉTÉ | `76784e5` | `docs/`, `AGENTS.md` |
 | **REQ-20261114-03** | 2026-11-14 | Intégration de la licence GPL-3.0 et synchronisation bi-directionnelle avec GitHub | COMPLÉTÉ | `0b552a9` | `LICENSE`, `package.json`, remotes |
 | **REQ-20261114-04** | 2026-11-14 | Professionnalisation du dépôt : README vitrine, Changelog officiel et pipeline Releases GitHub Actions | COMPLÉTÉ | `4645f42` | `README.md`, `CHANGELOG.md`, `.github/workflows/` |
+| **REQ-20261114-05** | 2026-11-14 | Présentation visuelle du projet (README vitrine, captures d'écran réelles HD de l'application) | COMPLÉTÉ | `0ebd819` | `README.md`, `docs/assets/screenshots/`, `App.tsx` |
 
 ---
 
@@ -107,4 +108,32 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
   - Tests unitaires et d'intégration validés (`npm.cmd test`).
   - Validation TypeScript sans erreur (`npm.cmd run typecheck`).
   - Dépôt synchronisé avec le NAS bare repo et GitHub.
+- **Statut** : **COMPLÉTÉ**
+
+---
+
+### REQ-20261114-05 : Présentation visuelle de l'outil avec captures d'écran réelles
+- **Demandeur** : Utilisateur
+- **Date** : 14/11/2026 05:27
+- **Besoin** :
+  1. Offrir aux visiteurs du dépôt GitHub une présentation visuelle attractive et engageante de l'outil plutôt qu'un README textuel austère.
+  2. Capturer des screenshots haute résolution (1440x900) illustrant les fonctionnalités phares :
+     - Écran d'accueil et hub de démarrage rapide (`01-welcome-hub.png`)
+     - Éditeur de documents et formulaires interactifs (`02-editor-document.png`)
+     - Grille d'organisation et manipulation de pages (`03-page-organizer.png`)
+     - Coffre-fort de signatures et signature cryptographique PKCS#7 (`04-signature-vault.png`)
+     - Dialogue d'export et conversion multi-formats (`05-export-formats.png`)
+  3. Intégrer ces captures dans le `README.md` avec une visite guidée structurée, un tableau comparatif avec Adobe Acrobat Pro et des boutons d'action clairs.
+- **Périmètre & Fichiers** :
+  - `README.md` (refonte complète orientée produit et présentation visuelle)
+  - `docs/assets/screenshots/` (5 captures d'écran HD réelles)
+  - `src/adapters/ui/App.tsx` (support des paramètres d'URL pour le rendu automatisé)
+  - `docs/governance/traceability-ledger.md`
+- **Point de Restauration / Réversibilité** :
+  - Commit de référence : `0ebd819`
+  - Commande de rollback si nécessaire : `git reset --hard 0ebd819`
+- **Résultat de Vérification** :
+  - Screenshots capturés avec succès via Chrome Headless et validés visuellement.
+  - Tests unitaires (47/47) et typecheck TypeScript validés sans erreur.
+  - Synchronisation avec le dépôt bare NAS et GitHub.
 - **Statut** : **COMPLÉTÉ**

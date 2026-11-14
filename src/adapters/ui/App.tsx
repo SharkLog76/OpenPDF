@@ -656,6 +656,28 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  // Automates visual preview and showcase screenshot capture via URL parameters
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('demo') === '1') {
+      void handleOpenSample().then(() => {
+        const v = params.get('view');
+        const themeParam = params.get('theme');
+        if (themeParam === 'light' || themeParam === 'dark') {
+          setTheme(themeParam);
+        }
+        if (v === 'organizer') {
+          setTabs((prev) => prev.map((t) => ({ ...t, showOrganizer: true })));
+        } else if (v === 'export') {
+          setShowExportModal(true);
+        } else if (v === 'signature') {
+          setShowRightPanel(true);
+          setRightTab('signatures');
+        }
+      });
+    }
+  }, [handleOpenSample]);
+
   const handleNewBlankDocument = useCallback(async () => {
     const tempService = new DocumentSessionService();
     const res = await tempService.openBlankDocument();
