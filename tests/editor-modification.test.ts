@@ -1,7 +1,8 @@
 import { PDFDocument } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 import { CommandLedger, createInitialEditorState } from '../src/application/ledger/CommandLedger.ts';
-import { parsePageRangeExpression } from '../src/contracts/schemas.ts';
+import { parsePageRangeExpression, sanitizeSafeLinkUrl } from '../src/contracts/schemas.ts';
+import { deserializeDetachedTabState } from '../src/domain/workspaceTabs.ts';
 import { groupTextRunsIntoBlocks, type RawTextRun } from '../src/domain/editor.ts';
 import {
   createBlankPdfBytes,
@@ -354,5 +355,69 @@ describe('editor/pdf-modification — CommandLedger, Round-Trip & Page Ops', () 
 
     const doc = await PDFDocument.load(inserted.value);
     expect(doc.getPageCount()).toBe(4);
+  });
+
+  it('bloque les URLs malveillantes, neutralise les surcouches biffées et filtre __proto__', async () => {
+    expect(sanitizeSafeLinkUrl('https://openpdf.example/doc').ok).toBe(true);
+    expect(sanitizeSafeLinkUrl('mailto:contact@example.org').ok).toBe(true);
+    expect(sanitizeSafeLinkUrl('www.example.org').ok).toBe(true);
+    expect(sanitizeSafeLinkUrl('javascript:alert(1)').ok).toBe(false);
+    expect(sanitizeSafeLinkUrl('file:///C:/Windows/win.ini').ok).toBe(false);
+    expect(sanitizeSafeLinkUrl('\\\\server\\share\\file').ok).toBe(false);
+    expect(sanitizeSafeLinkUrl('https://user:pass@evil.example').ok).toBe(false);
+
+    const sampleBytes = await createSamplePdfBytes();
+    const baseState = createInitialEditorState(3);
+    const state = {
+      ...baseState,
+      links: [
+        {
+          id: 'lnk-bad',
+          pageIndex: 0,
+          rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.05 },
+          url: 'javascript:alert(1)',
+        },
+        {
+          id: 'lnk-ok',
+          pageIndex: 0,
+          rect: { x: 0.5, y: 0.5, width: 0.2, height: 0.05 },
+          url: 'https://example.org',
+        },
+      ],
+      texts: [
+        {
+          id: 'secret-txt',
+          pageIndex: 0,
+          rect: { x: 0.5, y: 0.5, width: 0.2, height: 0.05 },
+          text: 'SECRET_TOKEN',
+          fontSizePt: 12,
+          fontFamily: 'Helvetica' as const,
+          colorHex: '#000000',
+        },
+      ],
+      whiteouts: [
+        {
+          id: 'red-1',
+          pageIndex: 0,
+          rect: { x: 0.45, y: 0.45, width: 0.3, height: 0.15 },
+          fillHex: '#000000',
+          mode: 'redact' as const,
+        },
+      ],
+    };
+
+    const compiled = await compileEditedPdf(sampleBytes, state);
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    const rawLatin1 = new TextDecoder('latin1').decode(compiled.value);
+    expect(rawLatin1).not.toContain('javascript:alert');
+    expect(rawLatin1).not.toContain('https://example.org'); // link under redact rect suppressed
+
+    const polluted = deserializeDetachedTabState<Record<string, unknown>>(
+      '{"__proto__":{"polluted":true},"safe":123}'
+    );
+    expect(polluted?.safe).toBe(123);
+    expect(Object.prototype.hasOwnProperty.call(polluted, '__proto__')).toBe(false);
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 });

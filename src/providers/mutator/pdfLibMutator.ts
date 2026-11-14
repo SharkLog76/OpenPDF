@@ -12,15 +12,37 @@ import {
   type PDFFont,
   type PDFPage,
 } from 'pdf-lib';
-import { ADMISSION_LIMITS, parsePageRangeExpression } from '../../contracts/schemas.ts';
+import { ADMISSION_LIMITS, parsePageRangeExpression, sanitizeSafeLinkUrl } from '../../contracts/schemas.ts';
 import type { DomainError } from '../../contracts/errors.ts';
 import {
   normalizedRectToPdfPoints,
   type AcroFormFieldDescriptor,
   type EditorDocumentState,
+  type NormalizedRect,
   type PageTransformState,
   type PdfStandardFamily,
+  type WhiteoutRectItem,
 } from '../../domain/editor.ts';
+
+function rectsOverlap(a: NormalizedRect, b: NormalizedRect): boolean {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+function isCoveredByRedact(
+  pageIndex: number,
+  rect: NormalizedRect,
+  whiteouts: readonly WhiteoutRectItem[] | undefined
+): boolean {
+  if (!whiteouts || whiteouts.length === 0) return false;
+  return whiteouts.some(
+    (wo) => wo.mode === 'redact' && wo.pageIndex === pageIndex && rectsOverlap(wo.rect, rect)
+  );
+}
 import { err, ok, type Result } from '../../domain/result.ts';
 import type { SignaturePlacement, VisualSignatureAsset } from '../../domain/signing.ts';
 
@@ -386,7 +408,7 @@ export async function compileEditedPdf(
           height: origBox.height + 2,
           color: hexToRgbColor(ed.backgroundHex),
         });
-        if (!ed.deleted && ed.currentText.length > 0) {
+        if (!ed.deleted && ed.currentText.length > 0 && !isCoveredByRedact(pIdx, ed.currentRect, editorState.whiteouts)) {
           const nextBox = normalizedRectToPdfPoints(ed.currentRect, pw, ph);
           const font = await getFont(ed.fontFamily, ed.bold, ed.italic);
           page.drawText(ed.currentText, {
@@ -421,6 +443,7 @@ export async function compileEditedPdf(
     for (const ann of editorState.annotations) {
       const page: PDFPage | undefined = pages[ann.pageIndex];
       if (!page) continue;
+      if (isCoveredByRedact(ann.pageIndex, ann.rect, editorState.whiteouts)) continue;
       const { width: pw, height: ph } = page.getSize();
       const box = normalizedRectToPdfPoints(ann.rect, pw, ph);
       const color = hexToRgbColor(ann.colorHex);
@@ -507,6 +530,7 @@ export async function compileEditedPdf(
     for (const txt of editorState.texts) {
       const page = pages[txt.pageIndex];
       if (!page || !txt.text) continue;
+      if (isCoveredByRedact(txt.pageIndex, txt.rect, editorState.whiteouts)) continue;
       const { width: pw, height: ph } = page.getSize();
       const box = normalizedRectToPdfPoints(txt.rect, pw, ph);
       const font = await getFont(txt.fontFamily, Boolean(txt.bold), Boolean(txt.italic));
@@ -552,6 +576,9 @@ export async function compileEditedPdf(
     for (const link of editorState.links ?? []) {
       const page = pages[link.pageIndex];
       if (!page || !link.url.trim()) continue;
+      if (isCoveredByRedact(link.pageIndex, link.rect, editorState.whiteouts)) continue;
+      const safeUrl = sanitizeSafeLinkUrl(link.url);
+      if (!safeUrl.ok) continue;
       const { width: pw, height: ph } = page.getSize();
       const box = normalizedRectToPdfPoints(link.rect, pw, ph);
       const linkAnnot = targetDoc.context.obj({
@@ -563,7 +590,7 @@ export async function compileEditedPdf(
         A: {
           Type: PDFName.of('Action'),
           S: PDFName.of('URI'),
-          URI: PDFString.of(link.url.trim()),
+          URI: PDFString.of(safeUrl.value),
         },
       });
       const annotRef = targetDoc.context.register(linkAnnot);
@@ -714,6 +741,47 @@ export async function compileEditedPdf(
     return err({
       code: 'ExportSerializationFailed',
       message: 'Échec de compilation du document PDF modifié.',
+      cause: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
+ * Replaces redacted pages cleanly with rasterized PNG images so underlying text/vectors
+ * covered by redaction boxes are permanently destroyed.
+ */
+export async function replacePdfPagesWithRasterPngs(
+  pdfBytes: Uint8Array,
+  replacements: ReadonlyMap<number, Uint8Array>
+): Promise<Result<Uint8Array, DomainError>> {
+  if (replacements.size === 0) return ok(pdfBytes);
+  try {
+    const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: false });
+    const sortedIndices = Array.from(replacements.keys()).sort((a, b) => a - b);
+    for (const pageIdx of sortedIndices) {
+      const pngBytes = replacements.get(pageIdx);
+      if (!pngBytes) continue;
+      const pages = doc.getPages();
+      const existing = pages[pageIdx];
+      if (!existing) continue;
+      const { width, height } = existing.getSize();
+      const rotation = existing.getRotation();
+      const embeddedPng = await doc.embedPng(pngBytes);
+      doc.removePage(pageIdx);
+      const cleanPage = doc.insertPage(pageIdx, [width, height]);
+      cleanPage.setRotation(rotation);
+      cleanPage.drawImage(embeddedPng, {
+        x: 0,
+        y: 0,
+        width,
+        height,
+      });
+    }
+    return ok(await doc.save({ useObjectStreams: false }));
+  } catch (e: unknown) {
+    return err({
+      code: 'ExportSerializationFailed',
+      message: 'Échec de rasterisation définitive des pages biffées.',
       cause: e instanceof Error ? e.message : String(e),
     });
   }

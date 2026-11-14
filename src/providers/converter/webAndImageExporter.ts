@@ -68,6 +68,7 @@ export function exportPagesToHtml(
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>${escapeXml(docTitle)} — Exporté par OpenPDF</title>
 <style>

@@ -1,7 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 import { createInitialEditorState } from '../src/application/ledger/CommandLedger.ts';
-import { detectImageFormat } from '../src/contracts/schemas.ts';
+import { detectImageFormat, sanitizeSvgMarkup } from '../src/contracts/schemas.ts';
 import type { VisualSignatureAsset } from '../src/domain/signing.ts';
 import {
   generateSelfSignedPkcs12,
@@ -137,5 +137,46 @@ describe('signing/pdf-signature — Formats Signatures, Coffre AES-GCM & PKCS#7 
     const tamperedVerifications = await verifyPdfSignatures(tampered);
     expect(tamperedVerifications).toHaveLength(1);
     expect(tamperedVerifications[0].status).toBe('tampered');
+
+    // Shadow / incremental append attack after EOF must NEVER be reported as 'intact'
+    const shadow = new Uint8Array(signRes.value.signedBytes.length + 20);
+    shadow.set(signRes.value.signedBytes, 0);
+    shadow.set(new TextEncoder().encode('\n%shadow-append-bad\n'), signRes.value.signedBytes.length);
+    const shadowVerifications = await verifyPdfSignatures(shadow);
+    expect(shadowVerifications).toHaveLength(1);
+    expect(shadowVerifications[0].status).toBe('tampered');
+
+    // Gap injection attack inside [a+b, c) outside <hex> must be rejected as 'tampered'
+    const gapAttack = new Uint8Array(signRes.value.signedBytes);
+    expect(verifications[0].byteRange).not.toBeNull();
+    const brC = verifications[0].byteRange![2];
+    const gapInject = new TextEncoder().encode('>/Evil 1 ');
+    gapAttack.set(gapInject, brC - gapInject.length);
+    const gapVerifications = await verifyPdfSignatures(gapAttack);
+    expect(gapVerifications).toHaveLength(1);
+    expect(gapVerifications[0].status).toBe('tampered');
+  });
+
+  it('rejette les SVG actifs/XXE et détecte le détournement d’ID (AAD AES-GCM) dans le coffre', async () => {
+    expect(sanitizeSvgMarkup('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 10"/></svg>').ok).toBe(true);
+    expect(sanitizeSvgMarkup('<!DOCTYPE svg><svg><path d="M0 0"/></svg>').ok).toBe(false);
+    expect(sanitizeSvgMarkup('<svg><script>alert(1)</script></svg>').ok).toBe(false);
+    expect(sanitizeSvgMarkup('<svg onload="alert(1)"><rect width="10" height="10"/></svg>').ok).toBe(false);
+    expect(sanitizeSvgMarkup('<svg><image href="https://evil.example/leak.png"/></svg>').ok).toBe(false);
+    expect(detectImageFormat(new TextEncoder().encode('<!DOCTYPE html><html><svg></svg></html>'), 1024).ok).toBe(false);
+
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const asset: VisualSignatureAsset = {
+      id: 'sig-aad-1',
+      label: 'AAD Test',
+      kind: 'handwritten',
+      pngBytes: TINY_PNG,
+      sha256: 'a'.repeat(64),
+      widthPx: 1,
+      heightPx: 1,
+      createdAtIso: new Date().toISOString(),
+    };
+    const enc = await encryptAssetPayload(asset, key);
+    await expect(decryptAssetPayload({ ...enc, id: 'sig-aad-tampered' }, key)).rejects.toThrow();
   });
 });

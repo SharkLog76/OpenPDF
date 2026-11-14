@@ -36,6 +36,7 @@ import { DocumentExportService } from '../../application/converter/DocumentExpor
 import type { CommandLedgerSnapshot } from '../../application/ledger/CommandLedger.ts';
 import { DocumentSessionService, type OpenedSessionBundle } from '../../application/session/DocumentSession.ts';
 import { formatDomainError } from '../../contracts/errors.ts';
+import { ADMISSION_LIMITS } from '../../contracts/schemas.ts';
 import type { ConversionAuditReport, ExportRequestOptions } from '../../domain/converter.ts';
 import type {
   AnnotationOverlayItem,
@@ -1103,6 +1104,17 @@ export const App: React.FC = () => {
 
   const handleInsertImageFile = async (file: File) => {
     if (!activeTab) return;
+    if (file.size === 0) {
+      setBanner({ kind: 'error', text: 'Le fichier image sélectionné est vide.' });
+      return;
+    }
+    if (file.size > ADMISSION_LIMITS.MAX_EMBED_IMAGE_BYTES) {
+      setBanner({
+        kind: 'error',
+        text: `Image trop volumineuse (${file.size} octets, plafond ${ADMISSION_LIMITS.MAX_EMBED_IMAGE_BYTES} octets).`,
+      });
+      return;
+    }
     const buf = new Uint8Array(await file.arrayBuffer());
     const prep = await activeTab.sessionService.prepareOverlayImage(buf, file.name);
     if (!prep.ok) {
@@ -1192,6 +1204,13 @@ export const App: React.FC = () => {
   };
 
   const handleImportSignatureFile = async (file: File, stripWhiteBg: boolean) => {
+    if (file.size === 0 || file.size > ADMISSION_LIMITS.MAX_SIGNATURE_IMAGE_BYTES) {
+      setBanner({
+        kind: 'error',
+        text: `Fichier signature hors limites (1 octet à ${ADMISSION_LIMITS.MAX_SIGNATURE_IMAGE_BYTES} octets).`,
+      });
+      return;
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const norm = await normalizeSignatureImageFile(bytes, file.name, stripWhiteBg);
     if (!norm.ok) {
@@ -1247,12 +1266,21 @@ export const App: React.FC = () => {
   };
 
   const handleImportP12 = async (file: File, passphrase: string) => {
+    if (file.size === 0 || file.size > ADMISSION_LIMITS.MAX_CERT_BYTES) {
+      setBanner({
+        kind: 'error',
+        text: `Certificat hors limites (1 octet à ${ADMISSION_LIMITS.MAX_CERT_BYTES} octets).`,
+      });
+      return;
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const parsed = parsePkcs12Container(bytes, passphrase);
     if (!parsed.ok) {
+      bytes.fill(0);
       setBanner({ kind: 'error', text: formatDomainError(parsed.error) });
       return;
     }
+    loadedP12Bytes?.fill(0);
     setLoadedP12Bytes(bytes);
     setLoadedP12Name(file.name);
     setLoadedCertMeta(parsed.value.metadata);
@@ -1263,12 +1291,21 @@ export const App: React.FC = () => {
   };
 
   const handleGenerateLocalP12 = async (cn: string, org: string, passphrase: string) => {
+    if (passphrase.trim().length < 6) {
+      setBanner({
+        kind: 'error',
+        text: 'Définissez une phrase secrète d’au moins 6 caractères dans le champ dédié avant de générer le .p12.',
+      });
+      return;
+    }
     const p12Bytes = generateSelfSignedPkcs12(cn, org, passphrase);
     const parsed = parsePkcs12Container(p12Bytes, passphrase);
     if (!parsed.ok) {
+      p12Bytes.fill(0);
       setBanner({ kind: 'error', text: formatDomainError(parsed.error) });
       return;
     }
+    loadedP12Bytes?.fill(0);
     setLoadedP12Bytes(p12Bytes);
     setLoadedP12Name(`${cn.replace(/\s+/g, '_') || 'local'}_cert.p12`);
     setLoadedCertMeta(parsed.value.metadata);
@@ -1287,7 +1324,7 @@ export const App: React.FC = () => {
 
     setBanner({
       kind: 'info',
-      text: `Certificat .p12 généré, téléchargé et prêt (mot de passe : "${passphrase}").`,
+      text: 'Certificat .p12 AES-256 généré, téléchargé et chargé (phrase secrète conservée en RAM uniquement).',
     });
   };
 

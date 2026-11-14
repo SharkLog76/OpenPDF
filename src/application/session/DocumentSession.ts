@@ -34,6 +34,7 @@ import {
   insertPdfPagesAtIndex,
   inspectAcroFormFields,
   mergePdfDocuments,
+  replacePdfPagesWithRasterPngs,
 } from '../../providers/mutator/pdfLibMutator.ts';
 import { PdfJsDocumentHandle } from '../../providers/renderer/pdfJsRenderer.ts';
 import {
@@ -143,10 +144,42 @@ export class DocumentSessionService {
     visualSignatures: readonly { readonly placement: SignaturePlacement; readonly asset: VisualSignatureAsset }[],
     flattenForms: boolean = false
   ): Promise<Result<Uint8Array, DomainError>> {
-    return compileEditedPdf(sourceBytes, editorState, {
+    const compiled = await compileEditedPdf(sourceBytes, editorState, {
       flattenForms,
       visualSignatures,
     });
+    if (!compiled.ok) return err(compiled.error);
+
+    const redactPages = new Set(
+      (editorState.whiteouts ?? [])
+        .filter((w) => w.mode === 'redact')
+        .map((w) => w.pageIndex)
+    );
+    if (redactPages.size > 0 && typeof document !== 'undefined') {
+      const renderHandleRes = await PdfJsDocumentHandle.open(compiled.value, 'redaction-flatten');
+      if (renderHandleRes.ok) {
+        const handle = renderHandleRes.value;
+        try {
+          const rasterMap = new Map<number, Uint8Array>();
+          for (const pageIdx of redactPages) {
+            if (pageIdx < 0 || pageIdx >= handle.pageCount) continue;
+            const rendered = await handle.renderPageToRasterBytes(pageIdx, 'png', 200);
+            if (rendered && rendered.bytes.byteLength > 0) {
+              rasterMap.set(pageIdx, rendered.bytes);
+            }
+          }
+          if (rasterMap.size > 0) {
+            const burned = await replacePdfPagesWithRasterPngs(compiled.value, rasterMap);
+            if (!burned.ok) return err(burned.error);
+            return ok(burned.value);
+          }
+        } finally {
+          await handle.dispose();
+        }
+      }
+    }
+
+    return ok(compiled.value);
   }
 
   async exportSignedPdf(
@@ -162,10 +195,12 @@ export class DocumentSessionService {
     },
     flattenForms: boolean = false
   ): Promise<Result<{ readonly pdfBytes: Uint8Array; readonly certificate: CertificateMetadata | null }, DomainError>> {
-    const compiled = await compileEditedPdf(sourceBytes, editorState, {
-      flattenForms,
+    const compiled = await this.exportCompiledPdf(
+      sourceBytes,
+      editorState,
       visualSignatures,
-    });
+      flattenForms
+    );
     if (!compiled.ok) return err(compiled.error);
 
     if (!pkcs12Options) {

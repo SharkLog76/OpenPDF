@@ -11,7 +11,6 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
 
 jobs:
   build-and-release:
@@ -65,10 +64,10 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
 
-      # Signature de code via SignPath Foundation (Actif dès que le secret est configuré)
+      # Signature de code via SignPath Foundation (Actif dès que les variables/secrets sont configurés)
       - name: Soumission de signature à SignPath Foundation
         id: signpath
-        if: "${{ env.SIGNPATH_API_TOKEN != '' }}"
+        if: "${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}"
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}

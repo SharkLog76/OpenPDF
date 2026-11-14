@@ -1,8 +1,29 @@
 use serde::Serialize;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const ALLOWED_EXPORT_EXTENSIONS: &[&str] = &[
+    "docx", "xlsx", "pptx", "csv", "png", "jpg", "jpeg", "html", "txt", "zip",
+];
+
+fn has_allowed_extension(path: &Path, allowed: &[&str]) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| allowed.iter().any(|candidate| ext.eq_ignore_ascii_case(candidate)))
+        .unwrap_or(false)
+}
+
+fn reject_symlink(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "ReadFailed:Accès refusé aux liens symboliques : {}",
+            path.display()
+        )),
+        _ => Ok(()),
+    }
+}
 
 pub const MAX_PDF_BYTES_HARD_LIMIT: u64 = 100 * 1024 * 1024; // 100 MiB
 pub const MAX_EXPORT_BYTES_HARD_LIMIT: usize = 256 * 1024 * 1024; // 256 MiB
@@ -30,11 +51,21 @@ fn has_pdf_magic_header(bytes: &[u8]) -> bool {
 
 /// Reads a local PDF file with pre-read size bounds and `%PDF-` magic header checks.
 pub fn read_pdf_file_bounded_impl(path: &Path, max_bytes: u64) -> Result<LoadedPdfFile, String> {
+    reject_symlink(path)?;
+    if !has_allowed_extension(path, &["pdf"]) {
+        return Err(
+            "InvalidPdfHeader:Extension de fichier invalide : seul le format .pdf est autorisé."
+                .to_string(),
+        );
+    }
     if !path.is_file() {
         return Err(format!("ReadFailed:Fichier PDF introuvable : {}", path.display()));
     }
 
-    let meta = fs::metadata(path)
+    let file =
+        File::open(path).map_err(|e| format!("ReadFailed:Impossible d'ouvrir le fichier ({e})"))?;
+    let meta = file
+        .metadata()
         .map_err(|e| format!("ReadFailed:Impossible de lire les métadonnées ({e})"))?;
     let effective_limit = max_bytes.min(MAX_PDF_BYTES_HARD_LIMIT).max(1024);
 
@@ -49,8 +80,20 @@ pub fn read_pdf_file_bounded_impl(path: &Path, max_bytes: u64) -> Result<LoadedP
         ));
     }
 
-    let bytes =
-        fs::read(path).map_err(|e| format!("ReadFailed:Erreur de lecture disque ({e})"))?;
+    let mut bytes = Vec::with_capacity(meta.len().min(effective_limit) as usize);
+    file.take(effective_limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("ReadFailed:Erreur de lecture disque ({e})"))?;
+
+    if bytes.is_empty() {
+        return Err("EmptyFile:Le fichier PDF sélectionné est vide (0 octet).".to_string());
+    }
+    if (bytes.len() as u64) > effective_limit {
+        return Err(format!(
+            "FileTooLarge:Fichier trop volumineux (> {} octets).",
+            effective_limit
+        ));
+    }
 
     if !has_pdf_magic_header(&bytes) {
         return Err(
@@ -78,6 +121,8 @@ fn write_bytes_atomic_inner(
     bytes: &[u8],
     default_file_name: &str,
 ) -> Result<WrittenPdfResult, String> {
+    reject_symlink(path)?;
+
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -92,19 +137,26 @@ fn write_bytes_atomic_inner(
         .and_then(|s| s.to_str())
         .unwrap_or(default_file_name)
         .to_string();
+    let safe_tmp_stem: String = file_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
 
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let tmp_path = parent.join(format!(
-        ".{file_name}.openpdf.tmp.{}.{}",
+        ".{safe_tmp_stem}.openpdf.tmp.{}.{}",
         std::process::id(),
         nonce
     ));
 
     let write_res: Result<(), String> = (|| {
-        let mut tmp_file = File::create(&tmp_path)
+        let mut tmp_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
             .map_err(|e| format!("OverwriteFailed:Impossible de créer le fichier temporaire ({e})"))?;
         tmp_file
             .write_all(bytes)
@@ -137,6 +189,12 @@ fn write_bytes_atomic_inner(
 
 /// Atomically writes validated PDF bytes via a flushed staging file + rename replacement.
 pub fn write_pdf_atomic_impl(path: &Path, bytes: &[u8]) -> Result<WrittenPdfResult, String> {
+    if !has_allowed_extension(path, &["pdf"]) {
+        return Err(
+            "InvalidPdfHeader:Extension cible invalide : seul le format .pdf est autorisé pour l'enregistrement."
+                .to_string(),
+        );
+    }
     if bytes.is_empty() {
         return Err("EmptyFile:Impossible d'écrire un PDF vide (0 octet).".to_string());
     }
@@ -154,6 +212,12 @@ pub fn write_binary_file_atomic_impl(
     path: &Path,
     bytes: &[u8],
 ) -> Result<WrittenPdfResult, String> {
+    if !has_allowed_extension(path, ALLOWED_EXPORT_EXTENSIONS) {
+        return Err(
+            "ConversionFailed:Extension d'export non autorisée (autorisées : docx, xlsx, pptx, csv, png, jpg, jpeg, html, txt, zip)."
+                .to_string(),
+        );
+    }
     if bytes.is_empty() {
         return Err("ConversionFailed:Impossible d'écrire un fichier exporté vide (0 octet).".to_string());
     }
@@ -287,6 +351,14 @@ mod tests {
         assert_eq!(export_res.file_name, "export.docx");
         assert_eq!(fs::read(&export_target).unwrap(), b"PK\x03\x04mock-docx");
         assert!(write_binary_file_atomic_impl(&export_target, b"").is_err());
+
+        // Reject dangerous executable extensions and non-PDF write/read targets
+        let bad_export = dir.join("payload.exe");
+        assert!(write_binary_file_atomic_impl(&bad_export, b"MZfake").is_err());
+        let bad_pdf_write = dir.join("not_a_pdf.txt");
+        assert!(write_pdf_atomic_impl(&bad_pdf_write, v1).is_err());
+        fs::write(&bad_pdf_write, v1).unwrap();
+        assert!(read_pdf_file_bounded_impl(&bad_pdf_write, 1024 * 1024).is_err());
 
         let _ = fs::remove_dir_all(&dir);
     }

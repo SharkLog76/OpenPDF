@@ -125,6 +125,24 @@ describe('converter/pdf-export-formats — Analyse géométrique & Export Word/E
     const csvText = strFromU8(csvRes.bytes.slice(3));
     expect(csvText).toContain('Article;Quantite;Total');
     expect(csvText).toContain('Licence Pro;4;1250.50');
+
+    // CSV Formula Injection neutralization & preserved negative numbers
+    const formulaCsv = exportPagesToCsv([
+      {
+        pageIndex: 0,
+        widthPt: 595,
+        heightPt: 842,
+        runs: [
+          { text: '=CMD()', leftPt: 40, topPt: 40, baselineYPt: 50, fontSizePt: 10, widthPt: 60, heightPt: 12, fontFamily: 'Helvetica', bold: false, italic: false },
+          { text: '-42.50', leftPt: 160, topPt: 40, baselineYPt: 50, fontSizePt: 10, widthPt: 60, heightPt: 12, fontFamily: 'Helvetica', bold: false, italic: false },
+          { text: '@SUM(A1)', leftPt: 260, topPt: 40, baselineYPt: 50, fontSizePt: 10, widthPt: 60, heightPt: 12, fontFamily: 'Helvetica', bold: false, italic: false },
+        ],
+      },
+    ]);
+    const formulaText = strFromU8(formulaCsv.bytes.slice(3));
+    expect(formulaText).toContain("'=CMD()");
+    expect(formulaText).toContain("-42.50");
+    expect(formulaText).toContain("'@SUM(A1)");
   });
 
   it('génère une présentation PowerPoint (.pptx) en mode texte éditable et en mode visuel HD + notes', () => {
@@ -148,6 +166,7 @@ describe('converter/pdf-export-formats — Analyse géométrique & Export Word/E
     const htmlRes = exportPagesToHtml([SAMPLE_PAGE_1, SCANNED_PAGE_WITH_PNG], 'Rapport.pdf');
     const html = strFromU8(htmlRes.bytes);
     expect(html).toContain('Exporté par OpenPDF');
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
     expect(html).toContain('<h1>Rapport Trimestriel</h1>');
     expect(html).toContain('data:image/png;base64,');
 

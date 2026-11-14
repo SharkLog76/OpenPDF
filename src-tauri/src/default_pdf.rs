@@ -134,7 +134,15 @@ mod platform {
         } else {
             "ms-settings:defaultapps"
         };
-        Command::new("explorer.exe")
+        let system_root = std::env::var_os("SystemRoot")
+            .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+        let explorer_exe = std::path::Path::new(&system_root).join("explorer.exe");
+        let cmd_path = if explorer_exe.is_file() {
+            explorer_exe
+        } else {
+            std::path::PathBuf::from(r"C:\Windows\explorer.exe")
+        };
+        Command::new(cmd_path)
             .arg(target_uri)
             .spawn()
             .map_err(|e| format!("Impossible d'ouvrir les paramètres Windows : {}", e))?;

@@ -5,7 +5,7 @@
 import forge from 'node-forge';
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString } from 'pdf-lib';
 import type { DomainError } from '../../contracts/errors.ts';
-import { ADMISSION_LIMITS, detectImageFormat } from '../../contracts/schemas.ts';
+import { ADMISSION_LIMITS, detectImageFormat, sanitizeSvgMarkup } from '../../contracts/schemas.ts';
 import { err, ok, type Result } from '../../domain/result.ts';
 import type {
   CertificateMetadata,
@@ -61,6 +61,65 @@ export async function normalizeSignatureImageFile(
   if (!formatRes.ok) return err(formatRes.error);
 
   const fmt = formatRes.value;
+  let safeBytes = rawBytes;
+  if (fmt === 'svg') {
+    const svgText = new TextDecoder('utf-8', { fatal: false }).decode(rawBytes);
+    const sanitizedSvg = sanitizeSvgMarkup(svgText);
+    if (!sanitizedSvg.ok) return err(sanitizedSvg.error);
+    let cleanText = sanitizedSvg.value;
+    if (typeof DOMParser !== 'undefined' && typeof XMLSerializer !== 'undefined') {
+      const parsed = new DOMParser().parseFromString(cleanText, 'image/svg+xml');
+      if (parsed.querySelector('parsererror') || parsed.documentElement.localName.toLowerCase() !== 'svg') {
+        return err({
+          code: 'ImageDecodeFailed',
+          message: 'Structure XML/SVG invalide ou corrompue.',
+        });
+      }
+      const forbiddenTags = new Set([
+        'script',
+        'foreignobject',
+        'iframe',
+        'object',
+        'embed',
+        'applet',
+        'frame',
+        'frameset',
+        'meta',
+        'base',
+        'link',
+        'animate',
+        'set',
+      ]);
+      const allEls = Array.from(parsed.querySelectorAll('*'));
+      for (const el of allEls) {
+        if (forbiddenTags.has(el.localName.toLowerCase())) {
+          return err({
+            code: 'ImageDecodeFailed',
+            message: `Élément SVG non autorisé (${el.localName}) rejeté par sécurité.`,
+          });
+        }
+        for (const attr of Array.from(el.attributes)) {
+          const name = attr.name.toLowerCase();
+          const val = attr.value.trim();
+          if (name.startsWith('on')) {
+            return err({
+              code: 'ImageDecodeFailed',
+              message: `Attribut événement SVG non autorisé (${attr.name}).`,
+            });
+          }
+          if ((name === 'href' || name === 'xlink:href' || name === 'src') && val && !val.startsWith('#')) {
+            return err({
+              code: 'ImageDecodeFailed',
+              message: 'Référence externe interdite dans les attributs SVG.',
+            });
+          }
+        }
+      }
+      cleanText = new XMLSerializer().serializeToString(parsed.documentElement);
+    }
+    safeBytes = new TextEncoder().encode(cleanText);
+  }
+
   const mime =
     fmt === 'png'
       ? 'image/png'
@@ -71,8 +130,8 @@ export async function normalizeSignatureImageFile(
           : 'image/svg+xml';
 
   try {
-    const copy = new Uint8Array(rawBytes.byteLength);
-    copy.set(rawBytes);
+    const copy = new Uint8Array(safeBytes.byteLength);
+    copy.set(safeBytes);
     const blob = new Blob([copy.buffer], { type: mime });
     const imgUrl = URL.createObjectURL(blob);
 
@@ -120,7 +179,7 @@ export async function normalizeSignatureImageFile(
     const sha256 = await computeSha256Hex(pngBytes);
 
     return ok({
-      id: `sig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `sig-${crypto.randomUUID()}`,
       label: label || 'Signature importée',
       kind: 'imported-image',
       pngBytes,
@@ -174,7 +233,7 @@ export async function createTypographicStampAsset(
   const sha256 = await computeSha256Hex(pngBytes);
 
   return ok({
-    id: `sig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `sig-${crypto.randomUUID()}`,
     label: `Tampon : ${signerName.trim() || 'Signataire'}`,
     kind: 'stamp',
     pngBytes,
@@ -290,7 +349,10 @@ export function generateSelfSignedPkcs12(
   const keys = forge.pki.rsa.generateKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
-  cert.serialNumber = String(Math.floor(Date.now() / 1000));
+  const serialBytes = new Uint8Array(16);
+  crypto.getRandomValues(serialBytes);
+  serialBytes[0] = (serialBytes[0] & 0x7f) | 0x01; // positive non-zero ASN.1 serial
+  cert.serialNumber = Array.from(serialBytes, (b) => b.toString(16).padStart(2, '0')).join('');
   cert.validity.notBefore = new Date(Date.now() - 60_000);
   cert.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
 
@@ -307,7 +369,9 @@ export function generateSelfSignedPkcs12(
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
   const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], passphrase, {
-    algorithm: '3des',
+    algorithm: 'aes256',
+    count: 25_000,
+    saltSize: 16,
     friendlyName: commonName.trim() || 'OpenPDF Signer',
   });
   const der = forge.asn1.toDer(p12Asn1).getBytes();
@@ -318,9 +382,9 @@ export function generateSelfSignedPkcs12(
 
 const SIGNATURE_HEX_CAPACITY = 16384; // 8192 raw DER bytes
 
-function findAsciiSubarray(haystack: Uint8Array, needleStr: string): number {
+function findLastAsciiSubarray(haystack: Uint8Array, needleStr: string): number {
   const needle = new TextEncoder().encode(needleStr);
-  outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
+  outer: for (let i = haystack.length - needle.length; i >= 0; i--) {
     for (let j = 0; j < needle.length; j++) {
       if (haystack[i + j] !== needle[j]) continue outer;
     }
@@ -403,7 +467,7 @@ export async function signPdfWithPkcs12(
 
     const saved = await doc.save({ useObjectStreams: false });
     const contentsNeedle = `<${'0'.repeat(SIGNATURE_HEX_CAPACITY)}>`;
-    const contentsStart = findAsciiSubarray(saved, contentsNeedle);
+    const contentsStart = findLastAsciiSubarray(saved, contentsNeedle);
     if (contentsStart === -1) {
       return err({
         code: 'ByteRangeComputationFailed',
@@ -413,8 +477,8 @@ export async function signPdfWithPkcs12(
     const contentsEnd = contentsStart + contentsNeedle.length;
 
     const brMarker = '[ 0 1000000001 1000000002 1000000003 ]';
-    const brStart = findAsciiSubarray(saved, brMarker);
-    if (brStart === -1) {
+    const brStart = findLastAsciiSubarray(saved, brMarker);
+    if (brStart === -1 || Math.abs(contentsStart - brStart) > 4096) {
       return err({
         code: 'ByteRangeComputationFailed',
         message: 'Impossible de localiser le marqueur /ByteRange dans le flux PDF généré.',
@@ -485,6 +549,62 @@ export async function signPdfWithPkcs12(
   }
 }
 
+function resolveDigestDescriptor(digestOid: string): {
+  readonly label: string;
+  readonly webCryptoAlg: 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512';
+  readonly createForgeMd: () => forge.md.MessageDigest;
+  readonly deprecated?: boolean;
+} | null {
+  switch (digestOid) {
+    case forge.pki.oids.sha256:
+      return { label: 'SHA-256', webCryptoAlg: 'SHA-256', createForgeMd: () => forge.md.sha256.create() };
+    case forge.pki.oids.sha384:
+      return { label: 'SHA-384', webCryptoAlg: 'SHA-384', createForgeMd: () => forge.md.sha384.create() };
+    case forge.pki.oids.sha512:
+      return { label: 'SHA-512', webCryptoAlg: 'SHA-512', createForgeMd: () => forge.md.sha512.create() };
+    case forge.pki.oids.sha1:
+      return {
+        label: 'SHA-1 (obsolète)',
+        webCryptoAlg: 'SHA-1',
+        createForgeMd: () => forge.md.sha1.create(),
+        deprecated: true,
+      };
+    default:
+      return null;
+  }
+}
+
+function selectMatchingSignerCert(
+  certs: forge.pki.Certificate[],
+  issuerAsn1: forge.asn1.Asn1 | undefined,
+  serialRaw: string | undefined
+): forge.pki.Certificate | null {
+  if (certs.length === 0) return null;
+  if (issuerAsn1 && serialRaw) {
+    const targetIssuerDer = forge.asn1.toDer(issuerAsn1).getBytes();
+    const targetSerial = forge.util.bytesToHex(serialRaw).replace(/^0+/, '').toLowerCase();
+    for (const c of certs) {
+      const certIssuerDer = forge.asn1.toDer(forge.pki.distinguishedNameToAsn1(c.issuer)).getBytes();
+      const certSerial = c.serialNumber.replace(/^0+/, '').toLowerCase();
+      if (certIssuerDer === targetIssuerDer && certSerial === targetSerial) {
+        return c;
+      }
+    }
+    return null;
+  }
+  return certs[0];
+}
+
+async function computeBytesDigestHex(
+  data: Uint8Array,
+  alg: 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512'
+): Promise<string> {
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  const hashBuf = await crypto.subtle.digest(alg, copy.buffer);
+  return Array.from(new Uint8Array(hashBuf), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
  * Inspects and cryptographically verifies /Sig /ByteRange PKCS#7 signatures in a PDF,
  * returning REA-structured Observations, Derivations, and Unknowns.
@@ -495,19 +615,20 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
 
   // Match ByteRange arrays across the PDF
   const brRegex = /\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g;
-  let match: RegExpExecArray | null;
+  const rawMatches = Array.from(latin1.matchAll(brRegex));
   let sigIdx = 0;
 
-  while ((match = brRegex.exec(latin1)) !== null) {
+  for (const match of rawMatches) {
     sigIdx++;
     const a = Number(match[1]);
     const b = Number(match[2]);
     const c = Number(match[3]);
     const d = Number(match[4]);
     const byteRange: [number, number, number, number] = [a, b, c, d];
+    const matchIndex = match.index ?? 0;
 
-    const windowStart = Math.max(0, match.index - 400);
-    const windowEnd = Math.min(latin1.length, match.index + 24000);
+    const windowStart = Math.max(0, matchIndex - 400);
+    const windowEnd = Math.min(latin1.length, matchIndex + 24000);
     const slice = latin1.slice(windowStart, windowEnd);
 
     const subFilterMatch = /\/SubFilter\s*\/([A-Za-z0-9._-]+)/.exec(slice);
@@ -521,13 +642,24 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
       'Confiance racine externe (CA Root / eIDAS / CRL / OCSP) non vérifiée hors ligne.',
     ];
 
-    if (a + b > pdfBytes.length || c + d > pdfBytes.length || b <= 0 || c < a + b) {
+    const boundsValid =
+      Number.isSafeInteger(a) &&
+      Number.isSafeInteger(b) &&
+      Number.isSafeInteger(c) &&
+      Number.isSafeInteger(d) &&
+      a === 0 &&
+      b > 0 &&
+      c >= a + b &&
+      d > 0 &&
+      c + d <= pdfBytes.length;
+
+    if (!boundsValid) {
       results.push({
         fieldName,
         byteRange,
         subFilter,
-        status: 'unknown',
-        observations: [`/ByteRange [${a} ${b} ${c} ${d}] hors limites du fichier (${pdfBytes.length} octets).`],
+        status: 'tampered',
+        observations: [`/ByteRange [${a} ${b} ${c} ${d}] invalide ou hors limites du fichier (${pdfBytes.length} octets).`],
         derivations,
         unknowns,
         certificate: null,
@@ -535,16 +667,32 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
       continue;
     }
 
-    // Locate /Contents <HEX> immediately between ByteRange end (a+b) and start of second segment (c)
+    // Strict Gap Injection protection: [a+b, c) must contain ONLY the /Contents <hex> token
     const gapText = new TextDecoder('latin1').decode(pdfBytes.subarray(a + b, c));
-    const hexMatch = /<([0-9a-fA-F\s]+)>/.exec(gapText);
+    const trimmedGap = gapText.trim();
+    if (!/^<([0-9a-fA-F\s]+)>$/.test(trimmedGap)) {
+      results.push({
+        fieldName,
+        byteRange,
+        subFilter,
+        status: 'tampered',
+        observations: [
+          `/ByteRange [${a} ${b} ${c} ${d}] suspect : données non signées injectées dans l'interstice /Contents.`,
+        ],
+        derivations,
+        unknowns,
+        certificate: null,
+      });
+      continue;
+    }
+    const hexMatch = /^<([0-9a-fA-F\s]+)>$/.exec(trimmedGap);
     if (!hexMatch) {
       results.push({
         fieldName,
         byteRange,
         subFilter,
         status: 'unknown',
-        observations: [`/ByteRange [${a} ${b} ${c} ${d}] détecté, mais flux hexadécimal /Contents introuvable dans l'intervalle.`],
+        observations: [`/ByteRange [${a} ${b} ${c} ${d}] détecté, mais flux hexadécimal /Contents introuvable.`],
         derivations,
         unknowns,
         certificate: null,
@@ -560,11 +708,10 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
 
     observations.push(`/ByteRange [${a}, ${b}, ${c}, ${d}] couvre ${b + d} / ${pdfBytes.length} octets du PDF.`);
 
+    const trailingUnsignedBytes = pdfBytes.length - (c + d);
     const covered = new Uint8Array(b + d);
     covered.set(pdfBytes.subarray(a, a + b), 0);
     covered.set(pdfBytes.subarray(c, c + d), b);
-    const observedDigestHex = await computeSha256Hex(covered);
-    observations.push(`Condensat SHA-256 observé des plages signées : ${observedDigestHex.slice(0, 24)}…`);
 
     try {
       const asn1 = forge.asn1.fromDer(uint8ToBinaryString(cmsBytes));
@@ -572,25 +719,57 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
         certificates?: forge.pki.Certificate[];
         rawCapture?: {
           digestAlgorithm?: string;
+          issuer?: forge.asn1.Asn1;
+          serial?: string;
           signature?: string;
           authenticatedAttributes?: forge.asn1.Asn1[];
         };
       };
 
+      const digestOid = p7.rawCapture?.digestAlgorithm
+        ? forge.asn1.derToOid(p7.rawCapture.digestAlgorithm)
+        : forge.pki.oids.sha256;
+      const digestDesc = resolveDigestDescriptor(digestOid);
+      if (!digestDesc) {
+        results.push({
+          fieldName,
+          byteRange,
+          subFilter,
+          status: 'unknown',
+          observations: [...observations, `Algorithme de condensat CMS non approuvé ou inconnu (${digestOid}).`],
+          derivations,
+          unknowns,
+          certificate: null,
+        });
+        continue;
+      }
+
+      if (digestDesc.deprecated) {
+        derivations.push('Attention : cette signature utilise SHA-1 (algorithme cryptographique déprécié).');
+      }
+
+      const observedDigestHex = await computeBytesDigestHex(covered, digestDesc.webCryptoAlg);
+      observations.push(`Condensat ${digestDesc.label} observé des plages signées : ${observedDigestHex.slice(0, 24)}…`);
+
       const certs = p7.certificates ?? [];
-      const signerCert = certs[0] ?? null;
+      const signerCert = selectMatchingSignerCert(certs, p7.rawCapture?.issuer, p7.rawCapture?.serial);
       const certMeta = signerCert ? extractCertificateMetadata(signerCert) : null;
-      if (certMeta) {
+      if (certMeta && signerCert) {
         derivations.push(
           `Certificat X.509 extrait : CN="${certMeta.subjectCommonName}", Émetteur="${certMeta.issuerCommonName}" (${certMeta.isSelfSigned ? 'auto-signé' : 'chaîne CA'}).`
         );
+        const now = Date.now();
+        if (now < signerCert.validity.notBefore.getTime() || now > signerCert.validity.notAfter.getTime()) {
+          derivations.push('Certificat hors période de validité (expiré ou pas encore valide).');
+        }
+      } else if (certs.length > 0) {
+        derivations.push('Aucun certificat embarqué ne correspond à l’émetteur/numéro de série du SignerInfo CMS.');
       }
 
       // Inspect authenticatedAttributes messageDigest (OID 1.2.840.113549.1.9.4)
       const authAttrs = p7.rawCapture?.authenticatedAttributes ?? [];
       let embeddedDigestHex: string | null = null;
       for (const attr of authAttrs) {
-        // SEQUENCE { OID, SET { OCTET STRING } }
         const val = attr.value;
         if (Array.isArray(val) && val.length >= 2) {
           const oidDer = val[0];
@@ -606,25 +785,40 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
       }
 
       let cryptoSignatureValid = false;
+      let nonRsaKey = false;
       if (signerCert && p7.rawCapture?.signature && authAttrs.length > 0) {
-        // Re-encode authenticatedAttributes as a DER SET (tag 0x31) per RFC 5652 §5.4
-        const setAsn1 = forge.asn1.create(
-          forge.asn1.Class.UNIVERSAL,
-          forge.asn1.Type.SET,
-          true,
-          authAttrs
-        );
-        const setDer = forge.asn1.toDer(setAsn1).getBytes();
-        const md = forge.md.sha256.create();
-        md.update(setDer);
-        const rsaPub = signerCert.publicKey as forge.pki.rsa.PublicKey;
-        cryptoSignatureValid = rsaPub.verify(md.digest().bytes(), p7.rawCapture.signature);
+        const rsaPub = signerCert.publicKey as Partial<forge.pki.rsa.PublicKey>;
+        if (typeof rsaPub.verify === 'function') {
+          const setAsn1 = forge.asn1.create(
+            forge.asn1.Class.UNIVERSAL,
+            forge.asn1.Type.SET,
+            true,
+            authAttrs
+          );
+          const setDer = forge.asn1.toDer(setAsn1).getBytes();
+          const md = digestDesc.createForgeMd();
+          md.update(setDer);
+          cryptoSignatureValid = rsaPub.verify(md.digest().bytes(), p7.rawCapture.signature);
+        } else {
+          nonRsaKey = true;
+        }
       }
 
-      if (embeddedDigestHex !== null) {
+      if (nonRsaKey) {
+        results.push({
+          fieldName,
+          byteRange,
+          subFilter,
+          status: 'unknown',
+          observations,
+          derivations,
+          unknowns: [...unknowns, 'Clé publique non-RSA (ECDSA/EdDSA) non vérifiée par ce validateur local.'],
+          certificate: certMeta,
+        });
+      } else if (embeddedDigestHex !== null) {
         const digestMatches = embeddedDigestHex.toLowerCase() === observedDigestHex.toLowerCase();
-        if (digestMatches && cryptoSignatureValid) {
-          observations.push('Condensat SHA-256 et signature RSA CMS concordent exactement avec les octets du PDF.');
+        if (digestMatches && cryptoSignatureValid && trailingUnsignedBytes === 0) {
+          observations.push(`Condensat ${digestDesc.label}, /ByteRange intégral et signature RSA CMS valides.`);
           results.push({
             fieldName,
             byteRange,
@@ -636,11 +830,17 @@ export async function verifyPdfSignatures(pdfBytes: Uint8Array): Promise<Signatu
             certificate: certMeta,
           });
         } else {
-          observations.push(
-            digestMatches
-              ? 'La signature cryptographique RSA sur les attributs authentifiés est invalide.'
-              : `Discordance de condensat : signé=${embeddedDigestHex.slice(0, 16)}… vs observé=${observedDigestHex.slice(0, 16)}… (document modifié après signature).`
-          );
+          if (trailingUnsignedBytes > 0) {
+            observations.push(
+              `Attention : ${trailingUnsignedBytes} octet(s) non couverts par le /ByteRange en fin de fichier (modification incrémentale ou attaque Shadow détectée).`
+            );
+          } else if (!digestMatches) {
+            observations.push(
+              `Discordance de condensat : signé=${embeddedDigestHex.slice(0, 16)}… vs observé=${observedDigestHex.slice(0, 16)}… (document modifié après signature).`
+            );
+          } else {
+            observations.push('La signature cryptographique RSA sur les attributs authentifiés est invalide.');
+          }
           results.push({
             fieldName,
             byteRange,

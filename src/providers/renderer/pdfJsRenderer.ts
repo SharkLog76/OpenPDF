@@ -38,6 +38,31 @@ interface TextItemSpan {
   readonly height: number;
 }
 
+const MAX_CANVAS_EDGE_PX = 8192;
+const MAX_CANVAS_AREA_PX = 33_554_432; // ~134 MiB RGBA ceiling per offscreen surface
+
+function clampCanvasScale(logicalWidth: number, logicalHeight: number, desiredMultiplier: number): number {
+  const safeW = Math.max(1, logicalWidth);
+  const safeH = Math.max(1, logicalHeight);
+  let mult = Math.max(0.1, desiredMultiplier);
+  if (safeW * mult > MAX_CANVAS_EDGE_PX) {
+    mult = MAX_CANVAS_EDGE_PX / safeW;
+  }
+  if (safeH * mult > MAX_CANVAS_EDGE_PX) {
+    mult = Math.min(mult, MAX_CANVAS_EDGE_PX / safeH);
+  }
+  const area = safeW * mult * (safeH * mult);
+  if (area > MAX_CANVAS_AREA_PX) {
+    mult *= Math.sqrt(MAX_CANVAS_AREA_PX / area);
+  }
+  return Math.max(0.05, mult);
+}
+
+function releaseCanvasSurface(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 export class PdfJsDocumentHandle {
   private readonly doc: pdfjsLib.PDFDocumentProxy;
   private readonly docSha256: string;
@@ -63,6 +88,10 @@ export class PdfJsDocumentHandle {
       const loadingTask = pdfjsLib.getDocument({
         data: dataCopy,
         password,
+        enableXfa: false,
+        useWorkerFetch: false,
+        maxImageSize: 67_108_864,
+        canvasMaxAreaInBytes: 134_217_728,
       });
       const doc = await loadingTask.promise;
       return ok(new PdfJsDocumentHandle(doc, docSha256));
@@ -214,10 +243,11 @@ export class PdfJsDocumentHandle {
 
       const totalRotation = (page.rotate + extraRotation) % 360;
       const viewport = page.getViewport({ scale, rotation: totalRotation });
+      const safeDpr = clampCanvasScale(viewport.width, viewport.height, dpr);
 
       const offscreen = document.createElement('canvas');
-      offscreen.width = Math.max(1, Math.floor(viewport.width * dpr));
-      offscreen.height = Math.max(1, Math.floor(viewport.height * dpr));
+      offscreen.width = Math.max(1, Math.floor(viewport.width * safeDpr));
+      offscreen.height = Math.max(1, Math.floor(viewport.height * safeDpr));
       offscreen.style.width = `${Math.floor(viewport.width)}px`;
       offscreen.style.height = `${Math.floor(viewport.height)}px`;
 
@@ -230,7 +260,7 @@ export class PdfJsDocumentHandle {
         canvas: offscreen,
         canvasContext: offCtx,
         viewport,
-        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+        transform: safeDpr !== 1 ? [safeDpr, 0, 0, safeDpr, 0, 0] : undefined,
       });
 
       const abortHandler = () => {
@@ -251,7 +281,11 @@ export class PdfJsDocumentHandle {
       // Store in bounded LRU cache
       if (this.lruCache.size >= ADMISSION_LIMITS.MAX_RENDER_CACHE_PAGES) {
         const oldestKey = this.lruCache.keys().next().value;
-        if (oldestKey !== undefined) this.lruCache.delete(oldestKey);
+        if (oldestKey !== undefined) {
+          const evicted = this.lruCache.get(oldestKey);
+          if (evicted) releaseCanvasSurface(evicted);
+          this.lruCache.delete(oldestKey);
+        }
       }
       this.lruCache.set(cacheKey, offscreen);
 
@@ -290,7 +324,7 @@ export class PdfJsDocumentHandle {
     const totalRotation = (page.rotate + extraRotation) % 360;
     const baseVp = page.getViewport({ scale: 1, rotation: totalRotation });
     const targetWidth = 136;
-    const scale = targetWidth / Math.max(1, baseVp.width);
+    const scale = clampCanvasScale(baseVp.width, baseVp.height, targetWidth / Math.max(1, baseVp.width));
     const viewport = page.getViewport({ scale, rotation: totalRotation });
 
     targetCanvas.width = Math.max(1, Math.floor(viewport.width));
@@ -387,7 +421,9 @@ export class PdfJsDocumentHandle {
     if (cached) return cached;
 
     const page = await this.doc.getPage(pageIndex + 1);
-    const viewport = page.getViewport({ scale: 1 });
+    const baseVp = page.getViewport({ scale: 1 });
+    const safeScale = clampCanvasScale(baseVp.width, baseVp.height, 1);
+    const viewport = page.getViewport({ scale: safeScale });
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.floor(viewport.width));
     canvas.height = Math.max(1, Math.floor(viewport.height));
@@ -397,7 +433,11 @@ export class PdfJsDocumentHandle {
     await page.render({ canvas, canvasContext: ctx, viewport }).promise.catch(() => undefined);
     if (this.basePixelCanvasCache.size >= 8) {
       const oldest = this.basePixelCanvasCache.keys().next().value;
-      if (oldest !== undefined) this.basePixelCanvasCache.delete(oldest);
+      if (oldest !== undefined) {
+        const evicted = this.basePixelCanvasCache.get(oldest);
+        if (evicted) releaseCanvasSurface(evicted);
+        this.basePixelCanvasCache.delete(oldest);
+      }
     }
     this.basePixelCanvasCache.set(pageIndex, canvas);
     return canvas;
@@ -542,8 +582,9 @@ export class PdfJsDocumentHandle {
     if (this.disposed || typeof document === 'undefined') return null;
 
     const clampedDpi = Math.min(300, Math.max(72, dpi));
-    const scale = clampedDpi / 72;
     const page = await this.doc.getPage(pageIndex + 1);
+    const baseVp = page.getViewport({ scale: 1 });
+    const scale = clampCanvasScale(baseVp.width, baseVp.height, clampedDpi / 72);
     const viewport = page.getViewport({ scale });
 
     const canvas = document.createElement('canvas');
@@ -560,10 +601,13 @@ export class PdfJsDocumentHandle {
     const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
     const quality = format === 'jpeg' ? 0.92 : undefined;
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mime, quality));
+    const widthPx = canvas.width;
+    const heightPx = canvas.height;
+    releaseCanvasSurface(canvas);
     if (!blob) return null;
 
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    return { bytes, widthPx: canvas.width, heightPx: canvas.height };
+    return { bytes, widthPx, heightPx };
   }
 
   /**
@@ -596,10 +640,13 @@ export class PdfJsDocumentHandle {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    for (const c of this.lruCache.values()) releaseCanvasSurface(c);
     this.lruCache.clear();
     this.pageTextCache.clear();
     this.editableBlocksCache.clear();
+    for (const c of this.basePixelCanvasCache.values()) releaseCanvasSurface(c);
     this.basePixelCanvasCache.clear();
-    await this.doc.destroy().catch(() => undefined);
+    await this.doc.cleanup(false).catch(() => undefined);
+    await this.doc.loadingTask?.destroy?.().catch(() => undefined);
   }
 }

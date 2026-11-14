@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Move, RotateCcw, Trash2 } from 'lucide-react';
+import { sanitizeSafeLinkUrl } from '../../../contracts/schemas.ts';
 import type {
   AnnotationOverlayItem,
   CreatedFormFieldItem,
@@ -164,7 +165,25 @@ export const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({
   const [editingExistingKey, setEditingExistingKey] = useState<string | null>(null);
   const [pendingLinkRect, setPendingLinkRect] = useState<NormalizedRect | null>(null);
   const [pendingLinkUrl, setPendingLinkUrl] = useState('https://');
+  const [pendingLinkError, setPendingLinkError] = useState<string | null>(null);
   const prevTextIdsRef = useRef<Set<string>>(new Set(texts.map((t) => t.id)));
+
+  const submitPendingLink = () => {
+    if (!pendingLinkRect) return;
+    const valid = sanitizeSafeLinkUrl(pendingLinkUrl);
+    if (!valid.ok) {
+      setPendingLinkError(valid.error.message);
+      return;
+    }
+    onCreateLink({
+      id: `lnk-${crypto.randomUUID()}`,
+      pageIndex: displayPageIndex,
+      rect: pendingLinkRect,
+      url: valid.value,
+    });
+    setPendingLinkError(null);
+    setPendingLinkRect(null);
+  };
 
   // Auto-open inline editor when user places a brand-new added text block
   useEffect(() => {
@@ -1418,37 +1437,31 @@ export const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({
               className="text-input"
               style={{ marginBottom: 6 }}
               value={pendingLinkUrl}
-              onChange={(e) => setPendingLinkUrl(e.target.value)}
+              onChange={(e) => {
+                setPendingLinkUrl(e.target.value);
+                if (pendingLinkError) setPendingLinkError(null);
+              }}
               placeholder="https://exemple.org"
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && pendingLinkUrl.trim()) {
-                  onCreateLink({
-                    id: `lnk-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-                    pageIndex: displayPageIndex,
-                    rect: pendingLinkRect,
-                    url: pendingLinkUrl.trim(),
-                  });
-                  setPendingLinkRect(null);
+                  submitPendingLink();
                 }
               }}
             />
+            {pendingLinkError && (
+              <div style={{ color: '#ef4444', fontSize: 10.5, marginBottom: 6 }}>{pendingLinkError}</div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-              <button className="tool-btn" onClick={() => setPendingLinkRect(null)}>
-                Annuler
-              </button>
               <button
-                className="tool-btn primary"
+                className="tool-btn"
                 onClick={() => {
-                  if (!pendingLinkUrl.trim()) return;
-                  onCreateLink({
-                    id: `lnk-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-                    pageIndex: displayPageIndex,
-                    rect: pendingLinkRect,
-                    url: pendingLinkUrl.trim(),
-                  });
+                  setPendingLinkError(null);
                   setPendingLinkRect(null);
                 }}
               >
+                Annuler
+              </button>
+              <button className="tool-btn primary" onClick={submitPendingLink}>
                 Ajouter
               </button>
             </div>

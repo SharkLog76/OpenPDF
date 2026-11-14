@@ -223,17 +223,38 @@ pub async fn detach_tab_to_new_window(
     .await
 }
 
+pub(crate) fn validate_open_pdf_path(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Chemin PDF vide pour l'ouverture dans une nouvelle fenetre.".to_string());
+    }
+    let path = Path::new(trimmed);
+    let ext_ok = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false);
+    if !ext_ok {
+        return Err("Extension invalide : seul un fichier .pdf peut être ouvert.".to_string());
+    }
+    let sym_meta = std::fs::symlink_metadata(path)
+        .map_err(|_| "Fichier PDF introuvable pour l'ouverture dans une nouvelle fenetre.".to_string())?;
+    if sym_meta.file_type().is_symlink() || !sym_meta.is_file() {
+        return Err("Cible invalide : le chemin PDF doit désigner un fichier standard.".to_string());
+    }
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|_| "Impossible de résoudre le chemin PDF.".to_string())?;
+    Ok(canonical.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn open_path_in_new_window(
     app: AppHandle,
     state: tauri::State<'_, WindowRouterState>,
     path: String,
 ) -> Result<String, String> {
-    let trimmed = path.trim().to_string();
-    if trimmed.is_empty() {
-        return Err("Chemin PDF vide pour l'ouverture dans une nouvelle fenetre.".to_string());
-    }
-    let file_name = Path::new(&trimmed)
+    let validated_path = validate_open_pdf_path(&path)?;
+    let file_name = Path::new(&validated_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("Document.pdf")
@@ -242,7 +263,9 @@ pub async fn open_path_in_new_window(
         app,
         &state,
         file_name,
-        WindowLaunchPayload::OpenPath { path: trimmed },
+        WindowLaunchPayload::OpenPath {
+            path: validated_path,
+        },
         None,
     )
     .await
@@ -294,5 +317,15 @@ mod tests {
         assert_eq!(clamp_spawn_position(Some(f64::NAN), Some(100.0)), None);
         assert_eq!(clamp_spawn_position(Some(500.0), Some(10.0)), Some((360.0, 0.0)));
         assert_eq!(clamp_spawn_position(Some(200.0), Some(-400.0)), Some((60.0, -424.0)));
+    }
+
+    #[test]
+    fn validate_open_pdf_path_rejects_non_pdf_and_missing_files() {
+        assert!(validate_open_pdf_path("").is_err());
+        assert!(validate_open_pdf_path("C:\\Windows\\System32\\cmd.exe").is_err());
+        let tmp = std::env::temp_dir().join(format!("openpdf_win_test_{}.pdf", std::process::id()));
+        std::fs::write(&tmp, b"%PDF-1.7\n").unwrap();
+        assert!(validate_open_pdf_path(&tmp.to_string_lossy()).is_ok());
+        let _ = std::fs::remove_file(&tmp);
     }
 }

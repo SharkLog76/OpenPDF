@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   FileKey2,
@@ -144,6 +144,14 @@ export const SignatureVaultPanel: React.FC<SignatureVaultPanelProps> = ({
     return map;
   }, [assets]);
 
+  useEffect(() => {
+    return () => {
+      for (const url of previewUrls.values()) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, [previewUrls]);
+
   const handlePadPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = drawCanvasRef.current;
     if (!canvas) return;
@@ -188,7 +196,7 @@ export const SignatureVaultPanel: React.FC<SignatureVaultPanelProps> = ({
     const pngBytes = new Uint8Array(await blob.arrayBuffer());
     const sha256 = await computeSha256Hex(pngBytes);
     await onSaveDrawnAsset({
-      id: `sig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `sig-${crypto.randomUUID()}`,
       label: `Signature manuscrite (${new Date().toLocaleTimeString()})`,
       kind: 'handwritten',
       pngBytes,
@@ -441,8 +449,9 @@ export const SignatureVaultPanel: React.FC<SignatureVaultPanelProps> = ({
               <label className="field-label">Phrase secrète du certificat (RAM uniquement)</label>
               <input
                 type="password"
+                autoComplete="new-password"
                 className="text-input"
-                placeholder="Mot de passe .pfx / .p12"
+                placeholder="Mot de passe .pfx / .p12 (min. 6 car.)"
                 value={p12Passphrase}
                 onChange={(e) => onChangeP12Passphrase(e.target.value)}
               />
@@ -488,7 +497,7 @@ export const SignatureVaultPanel: React.FC<SignatureVaultPanelProps> = ({
                 <button
                   className="tool-btn"
                   style={{ width: '100%', border: '1px solid var(--border-color)', justifyContent: 'center' }}
-                  onClick={() => void onGenerateLocalP12(genCn, genOrg, p12Passphrase || 'openpdf')}
+                  onClick={() => void onGenerateLocalP12(genCn, genOrg, p12Passphrase)}
                 >
                   <Sparkles size={13} /> Générer &amp; Charger un .p12 local
                 </button>

@@ -60,6 +60,19 @@ export class DocumentExportService {
           ? [Math.min(Math.max(0, options.currentPageIndex), Math.max(0, total - 1))]
           : Array.from({ length: total }, (_, idx) => idx);
 
+      const MAX_RASTER_EXPORT_PAGES = 150;
+      const bulkRasterFormat =
+        options.format === 'png' ||
+        options.format === 'jpeg' ||
+        (options.format === 'pptx' && options.pptxMode === 'visual-slides') ||
+        (options.format === 'docx' && options.includeVisualPagesInWord);
+      if (bulkRasterFormat && targetIndices.length > MAX_RASTER_EXPORT_PAGES) {
+        return err({
+          code: 'ConversionFailed',
+          message: `Export image/visuel limité à ${MAX_RASTER_EXPORT_PAGES} pages par lot (${targetIndices.length} demandées) pour préserver la mémoire. Exportez la page courante ou divisez le PDF.`,
+        });
+      }
+
       const extracted: PdfPageExtractedContent[] = [];
 
       for (const pageIndex of targetIndices) {

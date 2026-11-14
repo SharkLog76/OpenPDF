@@ -16,6 +16,7 @@ export type DomainError =
   | { readonly code: 'CannotDeleteLastPage'; readonly message: string }
   | { readonly code: 'InvalidPageRange'; readonly message: string }
   | { readonly code: 'ImageDecodeFailed'; readonly message: string }
+  | { readonly code: 'UnsafeUrl'; readonly message: string }
   | { readonly code: 'MergeBudgetExceeded'; readonly message: string; readonly totalBytes: number; readonly maxBytes: number }
   | { readonly code: 'ExportSerializationFailed'; readonly message: string; readonly cause?: string }
   // Save / Overwrite errors

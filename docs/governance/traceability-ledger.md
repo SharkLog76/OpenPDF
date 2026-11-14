@@ -14,6 +14,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 | **REQ-20261114-04** | 2026-11-14 | Professionnalisation du dépôt : README vitrine, Changelog officiel et pipeline Releases GitHub Actions | COMPLÉTÉ | `4645f42` | `README.md`, `CHANGELOG.md`, `.github/workflows/` |
 | **REQ-20261114-05** | 2026-11-14 | Présentation visuelle du projet (README vitrine, captures d'écran réelles HD de l'application) | COMPLÉTÉ | `0ebd819` | `README.md`, `docs/assets/screenshots/`, `App.tsx` |
 | **REQ-20261114-06** | 2026-11-14 | Intégration de la signature de code SignPath Foundation (CI/CD GitHub Actions) | COMPLÉTÉ | `d31fc0f` | `.github/workflows/release.yml`, `docs/development/code-signing-signpath.md` |
+| **REQ-20261114-07** | 2026-11-14 | Audit complet et correction exhaustive des vulnérabilités de sécurité (App, Crypto, Tauri/Rust, Dépendances, CI) | COMPLÉTÉ | `4094831` | `package.json`, `src/`, `src-tauri/`, `.github/workflows/`, `tests/`, `docs/` |
 
 ---
 
@@ -160,4 +161,29 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
   - Workflow validé avec détection conditionnelle du secret `SIGNPATH_API_TOKEN`.
   - Documentation pas-à-pas fournie.
   - Synchronisation avec le dépôt bare NAS et GitHub.
+- **Statut** : **COMPLÉTÉ**
+
+---
+
+### REQ-20261114-07 : Revue complète de sécurité & remédiation multicouche
+- **Demandeur** : Utilisateur
+- **Date** : 14/11/2026 06:35
+- **Besoin** : Effectuer une revue exhaustive de l'ensemble de la base de code (dépendances NPM, backend Rust/Tauri, rendu PDF, moteur cryptographique PKCS#7/PKCS#12, stockage chiffré, exportateurs, interface React et workflows CI/CD) et corriger l'intégralité des failles de sécurité identifiées.
+- **Périmètre & Fichiers** :
+  - `package.json`, `package-lock.json` : mise à jour `pdfjs-dist` (`6.5.438`, correctif `GHSA-hq66-cqwq-w95j`) et `vitest` (`5.1.0`, `0` vulnérabilité `npm audit`).
+  - `src-tauri/tauri.conf.json`, `src-tauri/src/pdf_io.rs`, `src-tauri/src/default_pdf.rs`, `src-tauri/src/window_manager.rs` : activation CSP stricte WebView2, élimination TOCTOU & liens symboliques en lecture/écriture, `create_new(true)` staging atomique, liste blanche d'extensions sûres à l'export (`write_binary_file_atomic_impl`), résolution absolue de `%SystemRoot%\explorer.exe`.
+  - `src/contracts/errors.ts`, `src/contracts/schemas.ts` : erreur `UnsafeUrl`, `sanitizeSafeLinkUrl`, `sanitizeSvgMarkup` (anti-XXE/XSS/références externes).
+  - `src/providers/renderer/pdfJsRenderer.ts` : `enableXfa: false`, `useWorkerFetch: false`, plafonds mémoires `maxImageSize`/`canvasMaxAreaInBytes`/dimension Canvas (anti-OOM), libération des surfaces pixels à l'éviction/dispose.
+  - `src/providers/crypto/signatureProvider.ts` : chiffrement PKCS#12 AES-256 + numéro de série CSPRNG 128 bits, recherche `/Contents`/`/ByteRange` depuis EOF, vérificateur `/ByteRange` anti-Shadow Append & Gap Injection, matching certificat via `issuer`/`serial` CMS, multi-algorithmes SHA-256/384/512, neutralisation SVG avant rastérisation, UUID cryptographiques.
+  - `src/providers/storage/signatureVaultStore.ts` : AAD `asset.id` AES-GCM, vérification intégrité PNG/SHA-256 post-déchiffrement, fermeture garantie `db.close()` en bloc `finally`.
+  - `src/providers/mutator/pdfLibMutator.ts`, `src/application/session/DocumentSession.ts`, `src/domain/workspaceTabs.ts` : blocage URL dangereuses, suppression des surcouches sous biffure (`redact`) + rastérisation destructive des pages biffées (`replacePdfPagesWithRasterPngs`), filtrage anti-prototype pollution JSON (`__proto__`/`constructor`/`prototype`).
+  - `src/providers/converter/xlsxExporter.ts`, `src/providers/converter/webAndImageExporter.ts`, `src/application/converter/DocumentExportService.ts` : neutralisation d'injection de formules CSV, balise CSP dans l'export HTML, quota anti-OOM sur les exports raster multi-pages.
+  - `src/adapters/ui/App.tsx`, `SignatureVaultPanel.tsx`, `PdfPageCanvas.tsx` : suppression fuite mot de passe en clair dans les notifications UI et suppression mot de passe par défaut, nettoyage mémoire `.fill(0)` P12, révocation `URL.revokeObjectURL`, pré-contrôle `file.size` avant lecture mémoire, validation stricte URLs liens dans le canvas.
+  - `.github/workflows/ci.yml`, `.github/workflows/release.yml` : restriction `permissions: contents: read` en CI, suppression de l'exposition globale du secret `SIGNPATH_API_TOKEN` en env workflow.
+  - `tests/` & `docs/architecture/contracts-and-domain.md` : ajout des tests de régression sécurité et mise à jour de la documentation d'architecture.
+- **Point de Restauration / Réversibilité** :
+  - Commit de référence (`BASE_COMMIT`) : `4094831`
+  - Commande de rollback si nécessaire : `git reset --hard 4094831` (ou `git revert HEAD`)
+- **Résultat de Vérification** :
+  - Exécution complète `npm.cmd test`, `npm.cmd run typecheck`, `npm.cmd audit`, `cargo test --manifest-path src-tauri/Cargo.toml`, `npm.cmd run build` validée.
 - **Statut** : **COMPLÉTÉ**

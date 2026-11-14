@@ -188,10 +188,14 @@ export function exportPagesToCsv(
 
   const escapeCsvCell = (val: string) => {
     const clean = sanitizeXmlText(val);
-    if (/[";\r\n]/.test(clean)) {
-      return `"${clean.replace(/"/g, '""')}"`;
+    const formulaSafe =
+      /^[=+@\t\r]/.test(clean) || /^-(?!\d+(?:[.,]\d+)?$)/.test(clean)
+        ? `'${clean}`
+        : clean;
+    if (/[";\r\n]/.test(formulaSafe)) {
+      return `"${formulaSafe.replace(/"/g, '""')}"`;
     }
-    return clean;
+    return formulaSafe;
   };
 
   for (const a of analyses) {

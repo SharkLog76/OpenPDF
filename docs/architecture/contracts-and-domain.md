@@ -32,7 +32,8 @@ Les extensions de fichiers ne sont **jamais considérées comme fiables**. Tout 
   - **PNG** : `89 50 4E 47 0D 0A 1A 0A`
   - **JPEG** : `FF D8 FF`
   - **WebP** : En-tête `RIFF` avec sous-type `WEBP`
-  - **SVG** : Détection textuelle de balise XML `<svg`
+  - **SVG** : Détection XML racine `<svg` avec filtrage strict anti-XXE/XSS (`sanitizeSvgMarkup` : refus de `DOCTYPE`/`ENTITY`, `<script>`, `<foreignObject>`, attributs `on*` et références externes)
+- **URLs d'annotations (`sanitizeSafeLinkUrl`)** : Autorisation exclusive des schémas `https:`, `http:` et `mailto:` sans identifiants intégrés (`user:pass@`), ni chemins UNC / contrôle.
 
 ### 1.3 Algèbre d'Erreurs Typées (`src/contracts/errors.ts`)
 
@@ -49,7 +50,8 @@ Toutes les erreurs sont strictement modélisées sous forme d'union discriminée
 | | `RenderCancelled` | Tâche de rendu annulée suite à un scroll rapide ou changement de page. |
 | **Editor & Mutation** | `CannotDeleteLastPage` | Tentative de suppression de l'unique page restante. |
 | | `InvalidPageRange` | Plage de pages inexistante ou syntaxe incorrecte (ex. "5-2" ou page 0). |
-| | `ImageDecodeFailed` | Données d'image corrompues lors de l'intégration dans le PDF. |
+| | `ImageDecodeFailed` | Données d'image corrompues ou SVG actif/malveillant rejeté. |
+| | `UnsafeUrl` | URL d'annotation hypertexte utilisant un protocole ou format interdit. |
 | | `MergeBudgetExceeded` | Taille totale cumulée des documents à fusionner > 512 Mo. |
 | | `ExportSerializationFailed`| Échec de sérialisation finale du flux PDF par `pdf-lib`. |
 | **Save & Overwrite** | `OverwriteHandleUnavailable`| Aucun chemin ou handle fichier associé (nécessite "Enregistrer sous"). |

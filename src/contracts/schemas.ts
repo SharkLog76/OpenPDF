@@ -129,9 +129,21 @@ export function detectImageFormat(
     return ok('webp');
   }
 
-  // SVG: XML/UTF-8 text containing <svg
-  const headText = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, Math.min(bytes.byteLength, 2048)));
-  if (/<svg[\s>]/i.test(headText)) {
+  // SVG: XML/UTF-8 text beginning (after optional BOM/XML decl/comments) with <svg
+  const headText = new TextDecoder('utf-8', { fatal: false })
+    .decode(bytes.subarray(0, Math.min(bytes.byteLength, 2048)))
+    .replace(/^\uFEFF/, '')
+    .trimStart();
+  if (/<!\s*(doctype|entity)/i.test(headText) || /<html[\s>]/i.test(headText)) {
+    return err({
+      code: 'UnsupportedSignatureFileFormat',
+      message: 'Fichier SVG rejeté : déclarations XML dangereuses ou document HTML détecté.',
+    });
+  }
+  const strippedProlog = headText
+    .replace(/^(?:<\?xml[^?]*\?>\s*)*/i, '')
+    .replace(/^(?:<!--[\s\S]*?-->\s*)*/, '');
+  if (/^<svg[\s>]/i.test(strippedProlog)) {
     return ok('svg');
   }
 
@@ -139,6 +151,124 @@ export function detectImageFormat(
     code: 'UnsupportedSignatureFileFormat',
     message: 'Format de fichier signature non pris en charge (formats admis : PNG, SVG, JPEG, WebP).',
   });
+}
+
+/**
+ * Validates and normalizes an external hyperlink URI for PDF annotations.
+ * Allows strictly http:, https:, and mailto: schemes; rejects javascript:, file:, UNC, and embedded credentials.
+ */
+export function sanitizeSafeLinkUrl(rawUrl: string): Result<string, DomainError> {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return err({ code: 'UnsafeUrl', message: 'L’URL du lien est vide.' });
+  }
+  // Reject ASCII control characters, backslashes (UNC / Windows traversal), and angle brackets
+  if (/[\u0000-\u001F\u007F\\<>]/.test(trimmed)) {
+    return err({
+      code: 'UnsafeUrl',
+      message: 'URL invalide : caractères de contrôle ou chemins locaux interdits.',
+    });
+  }
+
+  const candidate =
+    trimmed.includes('://') || trimmed.toLowerCase().startsWith('mailto:')
+      ? trimmed
+      : trimmed.toLowerCase().startsWith('www.')
+        ? `https://${trimmed}`
+        : trimmed;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return err({
+      code: 'UnsafeUrl',
+      message: `URL invalide ou schéma manquant (utilisez https://, http:// ou mailto:) : "${trimmed}".`,
+    });
+  }
+
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== 'https:' && proto !== 'http:' && proto !== 'mailto:') {
+    return err({
+      code: 'UnsafeUrl',
+      message: `Protocole interdit (${parsed.protocol}) : seuls https://, http:// et mailto: sont autorisés.`,
+    });
+  }
+
+  if (parsed.username !== '' || parsed.password !== '') {
+    return err({
+      code: 'UnsafeUrl',
+      message: 'Les URLs contenant des identifiants intégrés (user:pass@) sont interdites.',
+    });
+  }
+
+  if ((proto === 'http:' || proto === 'https:') && !parsed.hostname) {
+    return err({
+      code: 'UnsafeUrl',
+      message: 'Nom d’hôte manquant dans l’URL.',
+    });
+  }
+
+  return ok(parsed.toString());
+}
+
+/**
+ * Fail-closed validator for SVG signature files before rasterization.
+ * Rejects XXE/DOCTYPE entities, scripts, foreignObject/iframe/embed, inline JS handlers, and external URLs.
+ */
+export function sanitizeSvgMarkup(rawSvg: string): Result<string, DomainError> {
+  const normalized = rawSvg.replace(/^\uFEFF/, '');
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : caractères de contrôle illégaux détectés.',
+    });
+  }
+  if (/<!\s*(doctype|entity)/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : DOCTYPE et ENTITY XML interdits.',
+    });
+  }
+  if (/<\s*(script|foreignObject|iframe|object|embed|applet|frame|frameset|meta|base|link|animate|set)\b/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : balise active ou embarquée interdite (script, foreignObject, iframe...).',
+    });
+  }
+  if (/\bon[a-z]{2,}\s*=/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : gestionnaires d’événements inline (onload, onclick, etc.) interdits.',
+    });
+  }
+  if (/(?:javascript|vbscript|data\s*:\s*text\/html)\s*:/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : URI scriptable interdite.',
+    });
+  }
+  // Block external resource fetches from inside an offline vector signature
+  if (/(?:href|xlink:href|src)\s*=\s*["']\s*(?!#)(?!data:image\/(?:png|jpeg|webp);base64,)[^"']+["']/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : références externes interdites dans une signature vectorielle.',
+    });
+  }
+  if (/url\(\s*["']?\s*(?!#)(?:https?:|file:|\/\/)/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'SVG rejeté : chargement CSS externe interdit dans une signature vectorielle.',
+    });
+  }
+  if (!/<svg[\s>]/i.test(normalized)) {
+    return err({
+      code: 'ImageDecodeFailed',
+      message: 'Contenu SVG racine (<svg>) introuvable.',
+    });
+  }
+
+  return ok(normalized);
 }
 
 /**

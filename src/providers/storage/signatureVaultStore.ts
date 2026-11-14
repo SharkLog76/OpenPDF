@@ -4,8 +4,10 @@
  * NEVER stores .pfx/.p12 passphrases or plaintext private keys.
  */
 import type { DomainError } from '../../contracts/errors.ts';
+import { ADMISSION_LIMITS, detectImageFormat } from '../../contracts/schemas.ts';
 import { err, ok, type Result } from '../../domain/result.ts';
 import type { SignatureAssetKind, VisualSignatureAsset } from '../../domain/signing.ts';
+import { computeSha256Hex } from '../filesystem/boundedFileSystem.ts';
 
 const DB_NAME = 'openpdf_vault_v1';
 const STORE_KEYS = 'vault_keys';
@@ -99,8 +101,13 @@ export async function encryptAssetPayload(
     createdAtIso: asset.createdAtIso,
   };
   const encoded = new TextEncoder().encode(JSON.stringify(payload));
+  const aad = new TextEncoder().encode(asset.id);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: aad },
+    key,
+    encoded
+  );
   return {
     id: asset.id,
     iv,
@@ -117,19 +124,28 @@ export async function decryptAssetPayload(
   ivCopy.set(record.iv);
   const cipherCopy = new Uint8Array(record.ciphertext.byteLength);
   cipherCopy.set(record.ciphertext);
+  const aad = new TextEncoder().encode(record.id);
 
   const plainBuf = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: ivCopy },
+    { name: 'AES-GCM', iv: ivCopy, additionalData: aad },
     key,
     cipherCopy.buffer
   );
   const parsed = JSON.parse(new TextDecoder().decode(plainBuf)) as SerializedSignatureAsset;
+  if (parsed.id !== record.id) {
+    throw new Error('Concordance d’identifiant du coffre invalide.');
+  }
+  const pngBytes = base64ToBytes(parsed.pngBase64);
+  const fmtRes = detectImageFormat(pngBytes, ADMISSION_LIMITS.MAX_SIGNATURE_IMAGE_BYTES);
+  if (!fmtRes.ok || fmtRes.value !== 'png') {
+    throw new Error('Contenu PNG du coffre invalide.');
+  }
   return {
     id: parsed.id,
     label: parsed.label,
     kind: parsed.kind,
-    pngBytes: base64ToBytes(parsed.pngBase64),
-    sha256: parsed.sha256,
+    pngBytes,
+    sha256: parsed.sha256 || (await computeSha256Hex(pngBytes)),
     widthPx: parsed.widthPx,
     heightPx: parsed.heightPx,
     createdAtIso: parsed.createdAtIso,
@@ -138,16 +154,16 @@ export async function decryptAssetPayload(
 
 export class SignatureVaultStore {
   async listAssets(): Promise<Result<VisualSignatureAsset[], DomainError>> {
+    let db: IDBDatabase | null = null;
     try {
-      const db = await openVaultDb();
+      db = await openVaultDb();
       const key = await getOrCreateVaultKey(db);
       const records = await new Promise<EncryptedVaultRecord[]>((resolve, reject) => {
-        const tx = db.transaction(STORE_ASSETS, 'readonly');
+        const tx = db!.transaction(STORE_ASSETS, 'readonly');
         const req = tx.objectStore(STORE_ASSETS).getAll();
         req.onsuccess = () => resolve((req.result as EncryptedVaultRecord[]) ?? []);
         req.onerror = () => reject(req.error);
       });
-      db.close();
 
       const decrypted: VisualSignatureAsset[] = [];
       for (const rec of records) {
@@ -165,21 +181,23 @@ export class SignatureVaultStore {
         message: 'Le coffre local chiffré est indisponible.',
         cause: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      db?.close();
     }
   }
 
   async saveAsset(asset: VisualSignatureAsset): Promise<Result<void, DomainError>> {
+    let db: IDBDatabase | null = null;
     try {
-      const db = await openVaultDb();
+      db = await openVaultDb();
       const key = await getOrCreateVaultKey(db);
       const record = await encryptAssetPayload(asset, key);
       await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_ASSETS, 'readwrite');
+        const tx = db!.transaction(STORE_ASSETS, 'readwrite');
         tx.objectStore(STORE_ASSETS).put(record);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
-      db.close();
       return ok(undefined);
     } catch (e: unknown) {
       return err({
@@ -187,19 +205,21 @@ export class SignatureVaultStore {
         message: 'Impossible d’enregistrer la signature dans le coffre chiffré.',
         cause: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      db?.close();
     }
   }
 
   async deleteAsset(id: string): Promise<Result<void, DomainError>> {
+    let db: IDBDatabase | null = null;
     try {
-      const db = await openVaultDb();
+      db = await openVaultDb();
       await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_ASSETS, 'readwrite');
+        const tx = db!.transaction(STORE_ASSETS, 'readwrite');
         tx.objectStore(STORE_ASSETS).delete(id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
-      db.close();
       return ok(undefined);
     } catch (e: unknown) {
       return err({
@@ -207,6 +227,8 @@ export class SignatureVaultStore {
         message: 'Impossible de supprimer la signature du coffre.',
         cause: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      db?.close();
     }
   }
 }

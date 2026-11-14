@@ -172,7 +172,10 @@ export function serializeDetachedTabState(payload: unknown): string {
  */
 export function deserializeDetachedTabState<T>(json: string): T | null {
   try {
-    return JSON.parse(json, (_key, value: unknown) => {
+    return JSON.parse(json, (key, value: unknown) => {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        return undefined;
+      }
       if (
         typeof value === 'object' &&
         value !== null &&
