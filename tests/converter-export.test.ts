@@ -46,6 +46,7 @@ const SAMPLE_PAGE_1: PdfPageExtractedContent = {
   pageIndex: 0,
   widthPt: 595.28,
   heightPt: 841.89,
+  rasterPngBytes: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]),
   runs: [
     run('Rapport Trimestriel', 50, 80, 22, 180, true),
     run('Article', 50, 140, 11, 55, true),
@@ -82,6 +83,8 @@ describe('converter/pdf-export-formats — Analyse géométrique & Export Word/E
     const lines = buildStructuredLinesFromRuns(SAMPLE_PAGE_1.runs);
     expect(lines.length).toBe(4);
     expect(lines[0].text).toBe('Rapport Trimestriel');
+    expect(lines[0].widthPt).toBeGreaterThan(0);
+    expect(lines[0].fontFamily).toBe('Helvetica');
 
     const paragraphs = buildStructuredParagraphs(lines);
     expect(paragraphs[0].headingLevel).toBe(1);
@@ -99,13 +102,20 @@ describe('converter/pdf-export-formats — Analyse géométrique & Export Word/E
     expect(scanAnalysis.unknownReason).toContain('aucun flux texte extractible');
   });
 
-  it('génère un fichier Word (.docx) valide contenant les textes et tableaux structurés', async () => {
-    const res = await exportPagesToDocx([SAMPLE_PAGE_1], 'Rapport.pdf', false);
-    const unzipped = unzipSync(res.bytes);
+  it('génère un fichier Word (.docx) haute fidélité exact-layout avec framePr et image d’arrière-plan', async () => {
+    const resExact = await exportPagesToDocx([SAMPLE_PAGE_1], 'Rapport.pdf', 'exact-layout');
+    const unzipped = unzipSync(resExact.bytes);
     expect(Object.keys(unzipped)).toContain('word/document.xml');
     const docXml = strFromU8(unzipped['word/document.xml']);
     expect(docXml).toContain('Licence Pro');
     expect(docXml).toContain('1250.50');
+    expect(docXml).toContain('w:framePr');
+    expect(docXml).toContain('behindDoc="1"');
+
+    // Flowing text mode works as well
+    const resFlowing = await exportPagesToDocx([SAMPLE_PAGE_1], 'Rapport.pdf', 'flowing-text');
+    const flowingXml = strFromU8(unzipSync(resFlowing.bytes)['word/document.xml']);
+    expect(flowingXml).toContain('Licence Pro');
   });
 
   it('génère un classeur Excel (.xlsx) strict avec feuilles, types numériques et un CSV UTF-8 FR', () => {
@@ -145,7 +155,17 @@ describe('converter/pdf-export-formats — Analyse géométrique & Export Word/E
     expect(formulaText).toContain("'@SUM(A1)");
   });
 
-  it('génère une présentation PowerPoint (.pptx) en mode texte éditable et en mode visuel HD + notes', () => {
+  it('génère une présentation PowerPoint (.pptx) en mode exact-slides, editable-text et visual-slides', () => {
+    // Mode exact-slides (défaut haute fidélité)
+    const exactPptx = exportPagesToPptx([SAMPLE_PAGE_1], 'exact-slides');
+    const exactZip = unzipSync(exactPptx.bytes);
+    expect(Object.keys(exactZip)).toContain('ppt/slides/slide1.xml');
+    expect(Object.keys(exactZip)).toContain('ppt/media/image1.png');
+    const exactSlide1 = strFromU8(exactZip['ppt/slides/slide1.xml']);
+    expect(exactSlide1).toContain('<p:pic>');
+    expect(exactSlide1).toContain('<p:sp>');
+    expect(exactSlide1).toContain('Rapport Trimestriel');
+
     const editablePptx = exportPagesToPptx([SAMPLE_PAGE_1], 'editable-text');
     const editZip = unzipSync(editablePptx.bytes);
     expect(Object.keys(editZip)).toContain('ppt/presentation.xml');
@@ -159,16 +179,19 @@ describe('converter/pdf-export-formats — Analyse géométrique & Export Word/E
     expect(Object.keys(visZip)).toContain('ppt/notesSlides/notesSlide1.xml');
   });
 
-  it('génère des exports HTML, TXT, PNG direct (1 page) et archive ZIP (multi-pages)', () => {
+  it('génère des exports HTML conformes, TXT, PNG direct (1 page) et archive ZIP (multi-pages)', () => {
     const txtRes = exportPagesToText([SAMPLE_PAGE_1]);
     expect(strFromU8(txtRes.bytes)).toContain('Rapport Trimestriel');
 
     const htmlRes = exportPagesToHtml([SAMPLE_PAGE_1, SCANNED_PAGE_WITH_PNG], 'Rapport.pdf');
     const html = strFromU8(htmlRes.bytes);
-    expect(html).toContain('Exporté par OpenPDF');
+    expect(html).toContain('Conforme OpenPDF');
     expect(html).toContain('http-equiv="Content-Security-Policy"');
-    expect(html).toContain('<h1>Rapport Trimestriel</h1>');
-    expect(html).toContain('data:image/png;base64,');
+    expect(html).toContain('class="pdf-sheet"');
+    expect(html).toContain('class="pdf-sheet-bg"');
+    expect(html).toContain('class="pdf-text-box"');
+    expect(html).toContain('Rapport Trimestriel');
+    expect(html).toContain('@media print');
 
     const singlePng = exportPagesToImages(
       [{ ...SCANNED_PAGE_WITH_PNG, pageIndex: 0 }],

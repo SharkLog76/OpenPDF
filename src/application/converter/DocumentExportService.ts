@@ -61,15 +61,18 @@ export class DocumentExportService {
           : Array.from({ length: total }, (_, idx) => idx);
 
       const MAX_RASTER_EXPORT_PAGES = 150;
+      const docxExact = options.format === 'docx' && options.docxMode !== 'flowing-text';
+      const pptxExactOrVisual = options.format === 'pptx' && options.pptxMode !== 'editable-text';
       const bulkRasterFormat =
         options.format === 'png' ||
         options.format === 'jpeg' ||
-        (options.format === 'pptx' && options.pptxMode === 'visual-slides') ||
-        (options.format === 'docx' && options.includeVisualPagesInWord);
+        options.format === 'html' ||
+        pptxExactOrVisual ||
+        docxExact;
       if (bulkRasterFormat && targetIndices.length > MAX_RASTER_EXPORT_PAGES) {
         return err({
           code: 'ConversionFailed',
-          message: `Export image/visuel limité à ${MAX_RASTER_EXPORT_PAGES} pages par lot (${targetIndices.length} demandées) pour préserver la mémoire. Exportez la page courante ou divisez le PDF.`,
+          message: `Export visuel haute fidélité limité à ${MAX_RASTER_EXPORT_PAGES} pages par lot (${targetIndices.length} demandées) pour préserver la mémoire. Exportez la page courante ou divisez le PDF.`,
         });
       }
 
@@ -77,12 +80,15 @@ export class DocumentExportService {
 
       for (const pageIndex of targetIndices) {
         const { widthPt, heightPt, runs } = await handle.extractRawPageTextRuns(pageIndex);
+        const blocks = await handle.extractEditableTextBlocks(pageIndex);
 
         const needsPng =
           options.format === 'png' ||
-          (options.format === 'pptx' && (options.pptxMode === 'visual-slides' || runs.length === 0)) ||
-          (options.format === 'docx' && (options.includeVisualPagesInWord || runs.length === 0)) ||
-          (options.format === 'html' && runs.length === 0);
+          options.format === 'html' ||
+          (options.format === 'docx' &&
+            (options.docxMode !== 'flowing-text' || options.includeVisualPagesInWord || runs.length === 0)) ||
+          (options.format === 'pptx' &&
+            (options.pptxMode !== 'editable-text' || runs.length === 0));
 
         const needsJpeg = options.format === 'jpeg';
         const dpi =
@@ -115,6 +121,7 @@ export class DocumentExportService {
           widthPt,
           heightPt,
           runs,
+          blocks,
           rasterPngBytes,
           rasterJpegBytes,
           rasterWidthPx,
@@ -132,10 +139,13 @@ export class DocumentExportService {
       let analyses: StructuredPageAnalysis[] = [];
 
       if (options.format === 'docx') {
+        const docxMode =
+          options.docxMode ??
+          (options.includeVisualPagesInWord === false ? 'flowing-text' : 'exact-layout');
         const res = await exportPagesToDocx(
           extracted,
           sourceDisplayName,
-          options.includeVisualPagesInWord
+          docxMode
         );
         outBytes = res.bytes;
         analyses = res.analyses;
@@ -148,7 +158,8 @@ export class DocumentExportService {
         outBytes = res.bytes;
         analyses = res.analyses;
       } else if (options.format === 'pptx') {
-        const res = exportPagesToPptx(extracted, options.pptxMode);
+        const pptxMode = options.pptxMode ?? 'exact-slides';
+        const res = exportPagesToPptx(extracted, pptxMode);
         outBytes = res.bytes;
         analyses = res.analyses;
       } else if (options.format === 'png' || options.format === 'jpeg') {

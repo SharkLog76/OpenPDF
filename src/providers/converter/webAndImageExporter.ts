@@ -1,10 +1,12 @@
 /**
  * Web HTML, Plain Text, and PNG/JPEG Image/Archive Exporter Provider backed by `fflate`.
+ * Produces high-fidelity web sheets and clean plain text / raster archives.
  */
 import { strToU8, zipSync } from 'fflate';
 import {
   analyzeExtractedPage,
   escapeXml,
+  extractPageLayoutBoxes,
   type PdfPageExtractedContent,
   type StructuredPageAnalysis,
 } from '../../domain/converter.ts';
@@ -17,6 +19,23 @@ function uint8ToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...slice);
   }
   return btoa(binary);
+}
+
+function resolveHtmlFont(family?: string): string {
+  if (!family) return 'Arial, Helvetica, sans-serif';
+  const lower = family.toLowerCase();
+  if (lower.includes('times') || lower.includes('serif')) return '"Times New Roman", Times, serif';
+  if (lower.includes('courier') || lower.includes('mono')) return '"Courier New", Courier, monospace';
+  return 'Arial, Helvetica, sans-serif';
+}
+
+function cleanColorHex(colorHex?: string): string {
+  if (!colorHex) return '#0F172A';
+  const clean = colorHex.trim();
+  if (/^#?[0-9a-fA-F]{6}$/.test(clean)) {
+    return clean.startsWith('#') ? clean : `#${clean}`;
+  }
+  return '#0F172A';
 }
 
 export function exportPagesToText(
@@ -37,30 +56,50 @@ export function exportPagesToHtml(
 ): { readonly bytes: Uint8Array; readonly analyses: StructuredPageAnalysis[] } {
   const analyses = pages.map((p) => analyzeExtractedPage(p));
 
-  const sectionsHtml = analyses
-    .map((a, idx) => {
-      const src = pages[idx];
-      const blocks: string[] = [];
-      for (const p of a.paragraphs) {
-        const tag =
-          p.headingLevel === 1 ? 'h1' : p.headingLevel === 2 ? 'h2' : p.headingLevel === 3 ? 'h3' : 'p';
-        const styleParts: string[] = [];
-        if (p.bold && tag === 'p') styleParts.push('font-weight:700');
-        if (p.italic) styleParts.push('font-style:italic');
-        const styleAttr = styleParts.length > 0 ? ` style="${styleParts.join(';')}"` : '';
-        blocks.push(`<${tag}${styleAttr}>${escapeXml(p.text)}</${tag}>`);
+  const sheetsHtml = pages
+    .map((src, idx) => {
+      const a = analyses[idx];
+      const widthPt = Math.max(100, src.widthPt);
+      const heightPt = Math.max(100, src.heightPt);
+      const boxes = extractPageLayoutBoxes(src);
+
+      const textSpans: string[] = [];
+      if (boxes.length > 0) {
+        for (const b of boxes) {
+          const font = resolveHtmlFont(b.fontFamily);
+          const color = cleanColorHex(b.colorHex);
+          const weight = b.bold ? '700' : '400';
+          const style = b.italic ? 'italic' : 'normal';
+          const escaped = escapeXml(b.text).replace(/\n/g, '<br/>');
+
+          textSpans.push(
+            `<div class="pdf-text-box" style="left:${b.leftPt.toFixed(2)}pt;top:${b.topPt.toFixed(2)}pt;width:${Math.max(20, b.widthPt).toFixed(2)}pt;min-height:${Math.max(10, b.heightPt).toFixed(2)}pt;font-size:${b.fontSizePt.toFixed(1)}pt;font-family:${font};color:${color};font-weight:${weight};font-style:${style};">${escaped}</div>`
+          );
+        }
+      } else if (a.lines.length > 0) {
+        for (const l of a.lines) {
+          const font = resolveHtmlFont(l.fontFamily);
+          const color = cleanColorHex(l.colorHex);
+          const weight = l.bold ? '700' : '400';
+          const style = l.italic ? 'italic' : 'normal';
+          const escaped = escapeXml(l.text);
+
+          textSpans.push(
+            `<div class="pdf-text-box" style="left:${l.leftPt.toFixed(2)}pt;top:${l.topPt.toFixed(2)}pt;width:${Math.max(20, l.widthPt).toFixed(2)}pt;min-height:${Math.max(10, l.heightPt).toFixed(2)}pt;font-size:${l.fontSizePt.toFixed(1)}pt;font-family:${font};color:${color};font-weight:${weight};font-style:${style};">${escaped}</div>`
+          );
+        }
       }
 
-      if (!a.hasText && src.rasterPngBytes) {
+      let bgHtml = '';
+      if (src.rasterPngBytes) {
         const b64 = uint8ToBase64(src.rasterPngBytes);
-        blocks.push(
-          `<img src="data:image/png;base64,${b64}" alt="Page ${a.pageIndex + 1}" style="max-width:100%;height:auto;border:1px solid #cbd5e1;" />`
-        );
-      } else if (!a.hasText) {
-        blocks.push(`<p><em>Page ${a.pageIndex + 1} : aucun texte extractible</em></p>`);
+        bgHtml = `<img class="pdf-sheet-bg" src="data:image/png;base64,${b64}" alt="Arrière-plan Page ${a.pageIndex + 1}" />`;
       }
 
-      return `<section class="pdf-page-export"><div class="page-label">Page ${a.pageIndex + 1}</div>${blocks.join('\n')}</section>`;
+      return `<div class="pdf-sheet" style="width:${widthPt.toFixed(2)}pt;height:${heightPt.toFixed(2)}pt;">
+  ${bgHtml}
+  <div class="pdf-text-layer">${textSpans.join('\n    ')}</div>
+</div>`;
     })
     .join('\n');
 
@@ -70,22 +109,59 @@ export function exportPagesToHtml(
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:;" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>${escapeXml(docTitle)} — Exporté par OpenPDF</title>
+<title>${escapeXml(docTitle)} — Conforme OpenPDF</title>
 <style>
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 28px 16px; line-height: 1.55; }
-  .doc-container { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
-  .pdf-page-export { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 28px 34px; box-shadow: 0 4px 16px rgba(15,23,42,.08); }
-  .page-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 14px; }
-  h1 { font-size: 1.45rem; margin: 0 0 10px; }
-  h2 { font-size: 1.2rem; margin: 14px 0 8px; }
-  h3 { font-size: 1.05rem; margin: 12px 0 6px; }
-  p { margin: 0 0 9px; }
+  * { box-sizing: border-box; }
+  body {
+    background: #475569;
+    margin: 0;
+    padding: 32px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .pdf-sheet {
+    position: relative;
+    background: #ffffff;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+    overflow: hidden;
+  }
+  .pdf-sheet-bg {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    pointer-events: none;
+    user-select: none;
+  }
+  .pdf-text-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: auto;
+  }
+  .pdf-text-box {
+    position: absolute;
+    line-height: 1.18;
+    white-space: pre-wrap;
+    word-break: break-word;
+    transform-origin: top left;
+  }
+  @media print {
+    @page { margin: 0; size: auto; }
+    body { background: none; padding: 0; gap: 0; }
+    .pdf-sheet { box-shadow: none; margin: 0; page-break-after: always; }
+  }
 </style>
 </head>
 <body>
-<main class="doc-container">
-${sectionsHtml}
-</main>
+${sheetsHtml}
 </body>
 </html>`;
 

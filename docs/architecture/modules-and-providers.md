@@ -55,12 +55,17 @@ Les *Providers* sont les seuls modules autorisés à manipuler des dépendances 
 - **Générateurs** : `createBlankPdfBytes()` (PDF vierge A4) et `createSamplePdfBytes()` (guide de démarrage).
 
 ### 1.5 Moteurs d'Exportation Multi-Formats : `src/providers/converter/`
-- **`docxExporter.ts`** : Transforme le flux textuel et les titres du PDF en document Microsoft Word `.docx` structuré via la bibliothèque `docx`.
-- **`pptxExporter.ts`** : Génère une présentation Microsoft PowerPoint `.pptx` (archive OpenXML zippée via `fflate`) où chaque page du PDF devient une diapositive avec ses blocs de texte positionnés.
-- **`xlsxExporter.ts`** : Analyse les alignements tabulaires et produit un classeur Excel `.xlsx`.
+- **`docxExporter.ts`** :
+  - **Mode `exact-layout` (défaut recommandé)** : Reproduction 100% conforme au PDF. Sections Word aux dimensions exactes en twips (`1 pt = 20 twips`) avec marges nulles, arrière-plan graphique HD plein format ancré sous le texte (`behindDocument: true`, `wrap: NONE`) et zones de texte éditables positionnées au millimètre via `w:framePr` (`type: "absolute"`, `anchor: "page"`), préservant les polices standards, tailles, graisses et couleurs.
+  - **Mode `flowing-text`** : Conversion en flux continu avec titres Word, paragraphes fluides et détection de tableaux éditables pour les utilisateurs privilégiant la refonte documentaire.
+- **`pptxExporter.ts`** :
+  - **Mode `exact-slides` (défaut recommandé)** : Diapositives haute fidélité avec visuel HD plein écran (`<p:pic>`) et formes textuelles éditables superposées (`<p:sp>`) à leurs coordonnées EMU exactes (`1 pt = 12700 EMU`), avec typographie (`<a:rPr>`) et couleurs préservées.
+  - **Mode `editable-text`** : Zones de texte seules repositionnées sans visuels de fond.
+  - **Mode `visual-slides`** : Diapositives visuelles HD intégrales avec transcription en notes de présentation.
+- **`xlsxExporter.ts`** : Analyse les alignements tabulaires géométriques, neutralise les injections de formules CSV (`'=`, `'-`, `'@`) et produit un classeur Excel `.xlsx` strict ou un fichier CSV UTF-8 avec BOM.
 - **`webAndImageExporter.ts`** :
-  - Export HTML autonome avec mise en page CSS.
-  - Export archive ZIP (`fflate`) contenant le rendu haute résolution (PNG ou JPEG) de l'ensemble des pages.
+  - **Export HTML haute fidélité** : Feuilles PDF autonomes aux dimensions réelles en points (`.pdf-sheet`), arrière-plan graphique HD plein format et couche de texte sélectionnable en CSS absolu, accompagnées d'une feuille de style d'impression `@media print`.
+  - **Export Images (PNG / JPEG)** : Rendu direct (1 page) ou archive ZIP (`fflate`) haute résolution (150 ou 300 DPI).
 
 ---
 

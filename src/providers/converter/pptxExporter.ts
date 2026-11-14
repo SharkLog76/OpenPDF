@@ -1,12 +1,18 @@
 /**
  * PowerPoint (.pptx) OOXML Exporter Provider backed by `fflate`.
  * Generates valid ECMA-376 PresentationML decks matching PDF page aspect ratios in EMU
- * (1 PDF pt = 12700 EMU), supporting both editable text frames and visual HD slides + notes.
+ * (1 PDF pt = 12700 EMU).
+ *
+ * Supports three modes:
+ * - 'exact-slides' (default): High-fidelity slide backdrop (HD image) + overlaid editable text boxes with exact typography.
+ * - 'editable-text': Clean editable text shapes only without background imagery.
+ * - 'visual-slides': High-resolution raster slides with full presenter notes transcript.
  */
 import { strToU8, zipSync } from 'fflate';
 import {
   analyzeExtractedPage,
   escapeXml,
+  extractPageLayoutBoxes,
   sanitizeXmlText,
   type PdfPageExtractedContent,
   type PptxExportMode,
@@ -17,6 +23,23 @@ const EMU_PER_PT = 12700;
 
 function ptToEmu(pt: number): number {
   return Math.max(91440, Math.round(pt * EMU_PER_PT));
+}
+
+function cleanColorHex(colorHex?: string): string {
+  if (!colorHex) return '0F172A';
+  const clean = colorHex.replace('#', '').trim();
+  if (/^[0-9a-fA-F]{6}$/.test(clean)) {
+    return clean.toUpperCase();
+  }
+  return '0F172A';
+}
+
+function resolvePptxFont(family?: string): string {
+  if (!family) return 'Arial';
+  const lower = family.toLowerCase();
+  if (lower.includes('times') || lower.includes('serif')) return 'Times New Roman';
+  if (lower.includes('courier') || lower.includes('mono')) return 'Courier New';
+  return 'Arial';
 }
 
 function buildThemeXml(): string {
@@ -99,19 +122,31 @@ function buildTextBoxXml(
   cyEmu: number,
   text: string,
   fontSizePt: number,
+  fontFamily: string,
+  colorHex: string,
   bold: boolean,
   italic: boolean
 ): string {
   const sz = Math.min(9600, Math.max(700, Math.round(fontSizePt * 100)));
   const boldAttr = bold ? ' b="1"' : '';
   const italicAttr = italic ? ' i="1"' : '';
+  const fontName = resolvePptxFont(fontFamily);
+  const color = cleanColorHex(colorHex);
+
+  const lines = text.split('\n');
+  const paragraphs = lines
+    .map(
+      (l) =>
+        `<a:p><a:r><a:rPr lang="fr-FR" sz="${sz}"${boldAttr}${italicAttr}><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:latin typeface="${escapeXml(fontName)}"/></a:rPr><a:t>${escapeXml(l)}</a:t></a:r></a:p>`
+    )
+    .join('');
 
   return (
     '<p:sp>' +
     `<p:nvSpPr><p:cNvPr id="${shapeId}" name="TextBox ${shapeId}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>` +
     `<p:spPr><a:xfrm><a:off x="${xEmu}" y="${yEmu}"/><a:ext cx="${cxEmu}" cy="${cyEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
-    '<p:txBody><a:bodyPr wrap="square" lIns="18000" tIns="9000" rIns="18000" bIns="9000"/><a:lstStyle/>' +
-    `<a:p><a:r><a:rPr lang="fr-FR" sz="${sz}"${boldAttr}${italicAttr}><a:solidFill><a:srgbClr val="0F172A"/></a:solidFill></a:rPr><a:t>${escapeXml(text)}</a:t></a:r></a:p>` +
+    '<p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0"/><a:lstStyle/>' +
+    paragraphs +
     '</p:txBody></p:sp>'
   );
 }
@@ -130,7 +165,7 @@ function buildNotesSlideXml(notesText: string): string {
 
 export function exportPagesToPptx(
   pages: readonly PdfPageExtractedContent[],
-  mode: PptxExportMode
+  mode: PptxExportMode = 'exact-slides'
 ): { readonly bytes: Uint8Array; readonly analyses: StructuredPageAnalysis[] } {
   const analyses = pages.map((p) => analyzeExtractedPage(p));
   const slideW = Math.round((pages[0]?.widthPt ?? 595.28) * EMU_PER_PT);
@@ -196,8 +231,6 @@ export function exportPagesToPptx(
     const relOffset = 6 + i;
     const src = pages[i];
     const analysis = analyses[i];
-    const pageSlideW = Math.round(Math.max(100, src.widthPt) * EMU_PER_PT);
-    const pageSlideH = Math.round(Math.max(100, src.heightPt) * EMU_PER_PT);
 
     const shapes: string[] = [];
     const slideRels: string[] = [
@@ -206,68 +239,100 @@ export function exportPagesToPptx(
     ];
 
     let shapeId = 2;
-    const useImageSlide = (mode === 'visual-slides' || !analysis.hasText) && Boolean(src.rasterPngBytes);
+    const includeBackdrop = (mode === 'exact-slides' || mode === 'visual-slides' || !analysis.hasText) && Boolean(src.rasterPngBytes);
 
-    if (useImageSlide && src.rasterPngBytes) {
+    if (includeBackdrop && src.rasterPngBytes) {
       hasAnyPngMedia = true;
       files[`ppt/media/image${slideNum}.png`] = src.rasterPngBytes;
       slideRels.push(
         `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${slideNum}.png"/>`
       );
-      // Scale image proportionally within slide dimensions
-      const scaleFit = Math.min(slideW / pageSlideW, slideH / pageSlideH);
       shapes.push(
         buildPictureShapeXml(
           shapeId++,
           'rId3',
-          Math.round(pageSlideW * scaleFit),
-          Math.round(pageSlideH * scaleFit),
+          slideW,
+          slideH,
           `PDF Page ${src.pageIndex + 1}`
         )
       );
     }
 
-    if (mode === 'editable-text' && analysis.hasText) {
+    const includeText = mode === 'exact-slides' || mode === 'editable-text';
+    if (includeText) {
       const scaleX = slideW / Math.max(1, src.widthPt);
       const scaleY = slideH / Math.max(1, src.heightPt);
-      for (const line of analysis.lines) {
-        const topPt = Math.max(0, line.baselineYPt - line.fontSizePt * 0.9);
-        const widthPt = Math.max(40, line.rightPt - line.leftPt + 24);
-        const heightPt = Math.max(18, line.fontSizePt * 1.65);
+      const boxes = extractPageLayoutBoxes(src);
 
-        const xEmu = Math.max(0, Math.round(line.leftPt * scaleX));
-        const yEmu = Math.max(0, Math.round(topPt * scaleY));
-        const cxEmu = Math.min(slideW - xEmu, ptToEmu(widthPt));
-        const cyEmu = Math.min(slideH - yEmu, ptToEmu(heightPt));
+      if (boxes.length > 0) {
+        for (const box of boxes) {
+          const textClean = sanitizeXmlText(box.text);
+          if (!textClean.trim()) continue;
 
+          const xEmu = Math.max(0, Math.round(box.leftPt * scaleX));
+          const yEmu = Math.max(0, Math.round(box.topPt * scaleY));
+          const cxEmu = Math.min(slideW - xEmu, Math.max(91440, Math.round(box.widthPt * scaleX)));
+          const cyEmu = Math.min(slideH - yEmu, Math.max(91440, Math.round(box.heightPt * scaleY)));
+
+          shapes.push(
+            buildTextBoxXml(
+              shapeId++,
+              xEmu,
+              yEmu,
+              cxEmu,
+              cyEmu,
+              textClean,
+              box.fontSizePt,
+              box.fontFamily,
+              box.colorHex ?? '0F172A',
+              box.bold,
+              box.italic
+            )
+          );
+        }
+      } else if (analysis.hasText) {
+        for (const line of analysis.lines) {
+          const textClean = sanitizeXmlText(line.text);
+          if (!textClean.trim()) continue;
+
+          const xEmu = Math.max(0, Math.round(line.leftPt * scaleX));
+          const yEmu = Math.max(0, Math.round(line.topPt * scaleY));
+          const cxEmu = Math.min(slideW - xEmu, Math.max(91440, Math.round(line.widthPt * scaleX)));
+          const cyEmu = Math.min(slideH - yEmu, Math.max(91440, Math.round(line.heightPt * scaleY)));
+
+          shapes.push(
+            buildTextBoxXml(
+              shapeId++,
+              xEmu,
+              yEmu,
+              cxEmu,
+              cyEmu,
+              textClean,
+              line.fontSizePt,
+              line.fontFamily,
+              line.colorHex ?? '0F172A',
+              line.bold,
+              line.italic
+            )
+          );
+        }
+      } else if (!includeBackdrop) {
         shapes.push(
           buildTextBoxXml(
             shapeId++,
-            xEmu,
-            yEmu,
-            Math.max(91440, cxEmu),
-            Math.max(91440, cyEmu),
-            line.text,
-            line.fontSizePt,
-            line.bold,
-            line.italic
+            ptToEmu(40),
+            ptToEmu(60),
+            ptToEmu(450),
+            ptToEmu(40),
+            `Page ${src.pageIndex + 1} : aucun texte extractible`,
+            14,
+            'Arial',
+            '64748B',
+            false,
+            true
           )
         );
       }
-    } else if (!useImageSlide && !analysis.hasText) {
-      shapes.push(
-        buildTextBoxXml(
-          shapeId++,
-          ptToEmu(40),
-          ptToEmu(60),
-          ptToEmu(450),
-          ptToEmu(40),
-          `Page ${src.pageIndex + 1} : aucun texte extractible`,
-          14,
-          false,
-          true
-        )
-      );
     }
 
     files[`ppt/slides/slide${slideNum}.xml`] = strToU8(

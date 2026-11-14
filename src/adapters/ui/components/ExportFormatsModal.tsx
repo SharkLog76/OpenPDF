@@ -13,6 +13,7 @@ import {
 import {
   EXPORT_FORMAT_CATALOG,
   type ConversionAuditReport,
+  type DocxExportMode,
   type ExportFormatId,
   type ExportPageScope,
   type ExportRequestOptions,
@@ -54,8 +55,8 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
   onClose,
 }) => {
   const [format, setFormat] = useState<ExportFormatId>('docx');
-  const [pptxMode, setPptxMode] = useState<PptxExportMode>('editable-text');
-  const [includeVisualPagesInWord, setIncludeVisualPagesInWord] = useState(false);
+  const [docxMode, setDocxMode] = useState<DocxExportMode>('exact-layout');
+  const [pptxMode, setPptxMode] = useState<PptxExportMode>('exact-slides');
   const [rasterDpi, setRasterDpi] = useState<150 | 300>(150);
   const [pageScope, setPageScope] = useState<ExportPageScope>('all');
 
@@ -66,8 +67,9 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
     e.preventDefault();
     void onRunExport({
       format,
+      docxMode,
       pptxMode,
-      includeVisualPagesInWord,
+      includeVisualPagesInWord: docxMode === 'exact-layout',
       rasterDpi,
       pageScope,
       currentPageIndex,
@@ -76,7 +78,7 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Exporter le PDF">
-      <form className="modal-card" style={{ width: 640, maxWidth: '94vw' }} onSubmit={handleSubmit}>
+      <form className="modal-card" style={{ width: 680, maxWidth: '94vw' }} onSubmit={handleSubmit}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <h3 style={{ margin: 0 }}>Exporter « {fileName} »</h3>
           <button
@@ -94,7 +96,7 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
           Conversion 100% locale sur votre poste (aucun envoi cloud).{' '}
           {hasPendingEdits
             ? 'Les modifications et signatures non encore enregistrées seront incluses dans l’export sans altérer le PDF d’origine.'
-            : 'Le contenu du document actif sera converti au format choisi.'}
+            : 'Le contenu du document actif sera converti au format choisi avec préservation maximale de la mise en page.'}
         </p>
 
         <div className="export-format-grid">
@@ -122,13 +124,13 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
         <div
           style={{
             marginTop: 12,
-            padding: 10,
+            padding: 12,
             borderRadius: 6,
             background: 'var(--bg-app)',
             border: '1px solid var(--border-color)',
             display: 'flex',
             flexDirection: 'column',
-            gap: 8,
+            gap: 10,
             fontSize: 12,
           }}
         >
@@ -155,36 +157,83 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
           </div>
 
           {format === 'docx' && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={includeVisualPagesInWord}
-                onChange={(e) => setIncludeVisualPagesInWord(e.target.checked)}
-              />
-              <span>Inclure aussi un rendu image fidèle pour chaque page (en plus du texte éditable)</span>
-            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontWeight: 600 }}>Mode de rendu Word :</span>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="docxMode"
+                  checked={docxMode === 'exact-layout'}
+                  onChange={() => setDocxMode('exact-layout')}
+                />
+                <div>
+                  <strong>Mise en page exacte & fidélité 100% (Recommandé)</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    Reproduction exacte du PDF (géométrie, arrière-plans, images, vectoriels) avec zones de texte éditables superposées à leurs positions d'origine.
+                  </div>
+                </div>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="docxMode"
+                  checked={docxMode === 'flowing-text'}
+                  onChange={() => setDocxMode('flowing-text')}
+                />
+                <div>
+                  <strong>Texte continu reflowable</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    Conversion en flux documentaire standard (titres Word, paragraphes fluides et tableaux détectés).
+                  </div>
+                </div>
+              </label>
+            </div>
           )}
 
           {format === 'pptx' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontWeight: 600 }}>Mode PowerPoint :</span>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="pptxMode"
+                  checked={pptxMode === 'exact-slides'}
+                  onChange={() => setPptxMode('exact-slides')}
+                />
+                <div>
+                  <strong>Diapositives fidèles & texte éditable (Recommandé)</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    Arrière-plan HD plein format + boîtes de texte éditables positionnées au millimètre.
+                  </div>
+                </div>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 <input
                   type="radio"
                   name="pptxMode"
                   checked={pptxMode === 'editable-text'}
                   onChange={() => setPptxMode('editable-text')}
                 />
-                Zones de texte éditables (+ notes)
+                <div>
+                  <strong>Texte seul sans arrière-plan</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    Boîtes de texte éditables repositionnées sans éléments graphiques de fond.
+                  </div>
+                </div>
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 <input
                   type="radio"
                   name="pptxMode"
                   checked={pptxMode === 'visual-slides'}
                   onChange={() => setPptxMode('visual-slides')}
                 />
-                Diapositives visuelles HD (+ texte en notes)
+                <div>
+                  <strong>Diapositives visuelles HD intégrales</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    Rendu visuel exact par capture HD avec transcription du texte en notes de présentation.
+                  </div>
+                </div>
               </label>
             </div>
           )}
@@ -199,7 +248,7 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
                   checked={rasterDpi === 150}
                   onChange={() => setRasterDpi(150)}
                 />
-                150 DPI (rapide)
+                150 DPI (standard)
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                 <input
@@ -208,7 +257,7 @@ export const ExportFormatsModal: React.FC<ExportFormatsModalProps> = ({
                   checked={rasterDpi === 300}
                   onChange={() => setRasterDpi(300)}
                 />
-                300 DPI (haute netteté)
+                300 DPI (très haute netteté)
               </label>
             </div>
           )}

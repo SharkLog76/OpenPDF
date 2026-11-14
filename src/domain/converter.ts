@@ -2,7 +2,7 @@
  * Pure Domain models and geometric layout/table inference algorithms
  * for PDF -> Office / Web / Image export (converter/pdf-export-formats).
  */
-import type { RawTextRun } from './editor.ts';
+import { groupTextRunsIntoBlocks, type ExistingTextBlock, type PdfStandardFamily, type RawTextRun } from './editor.ts';
 
 export type ExportFormatId =
   | 'docx'
@@ -14,7 +14,8 @@ export type ExportFormatId =
   | 'html'
   | 'txt';
 
-export type PptxExportMode = 'editable-text' | 'visual-slides';
+export type DocxExportMode = 'exact-layout' | 'flowing-text';
+export type PptxExportMode = 'exact-slides' | 'editable-text' | 'visual-slides';
 export type ExportPageScope = 'all' | 'current';
 
 export interface ExportFormatDescriptor {
@@ -33,7 +34,7 @@ export const EXPORT_FORMAT_CATALOG: readonly ExportFormatDescriptor[] = [
     extension: 'docx',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     filterName: 'Document Word',
-    summary: 'Titres, paragraphes structurés, tableaux détectés et repli image pour pages scannées.',
+    summary: 'Rendu 100% conforme au PDF (mise en page, polices, images, dimensions exactes) avec texte éditable.',
   },
   {
     id: 'xlsx',
@@ -49,7 +50,7 @@ export const EXPORT_FORMAT_CATALOG: readonly ExportFormatDescriptor[] = [
     extension: 'pptx',
     mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     filterName: 'Présentation PowerPoint',
-    summary: 'Une diapositive par page : zones de texte éditables ou captures visuelles HD + notes.',
+    summary: 'Diapositives haute fidélité visuelle avec visuels HD et zones de texte éditables superposées.',
   },
   {
     id: 'csv',
@@ -81,7 +82,7 @@ export const EXPORT_FORMAT_CATALOG: readonly ExportFormatDescriptor[] = [
     extension: 'html',
     mimeType: 'text/html;charset=utf-8',
     filterName: 'Page HTML',
-    summary: 'Document HTML5 autonome avec styles intégrés et images embarquées.',
+    summary: 'Feuille PDF haute fidélité avec arrière-plan graphique HD, texte sélectionnable et style d’impression.',
   },
   {
     id: 'txt',
@@ -95,8 +96,9 @@ export const EXPORT_FORMAT_CATALOG: readonly ExportFormatDescriptor[] = [
 
 export interface ExportRequestOptions {
   readonly format: ExportFormatId;
+  readonly docxMode?: DocxExportMode;
   readonly pptxMode: PptxExportMode;
-  readonly includeVisualPagesInWord: boolean;
+  readonly includeVisualPagesInWord?: boolean;
   readonly rasterDpi: 150 | 300;
   readonly pageScope: ExportPageScope;
   readonly currentPageIndex: number;
@@ -107,6 +109,7 @@ export interface PdfPageExtractedContent {
   readonly widthPt: number;
   readonly heightPt: number;
   readonly runs: readonly RawTextRun[];
+  readonly blocks?: readonly ExistingTextBlock[];
   readonly rasterPngBytes?: Uint8Array;
   readonly rasterJpegBytes?: Uint8Array;
   readonly rasterWidthPx?: number;
@@ -116,12 +119,68 @@ export interface PdfPageExtractedContent {
 export interface LayoutLine {
   readonly baselineYPt: number;
   readonly leftPt: number;
+  readonly topPt: number;
   readonly rightPt: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
   readonly fontSizePt: number;
+  readonly fontFamily: PdfStandardFamily;
+  readonly colorHex?: string;
   readonly bold: boolean;
   readonly italic: boolean;
   readonly text: string;
   readonly runs: readonly RawTextRun[];
+}
+
+export interface TextLayoutBox {
+  readonly text: string;
+  readonly leftPt: number;
+  readonly topPt: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
+  readonly fontSizePt: number;
+  readonly fontFamily: PdfStandardFamily;
+  readonly bold: boolean;
+  readonly italic: boolean;
+  readonly colorHex: string;
+}
+
+export function extractPageLayoutBoxes(page: PdfPageExtractedContent): TextLayoutBox[] {
+  const widthPt = Math.max(10, page.widthPt);
+  const heightPt = Math.max(10, page.heightPt);
+
+  if (page.blocks && page.blocks.length > 0) {
+    return page.blocks.map((b) => ({
+      text: b.text,
+      leftPt: b.rect.x * widthPt,
+      topPt: b.rect.y * heightPt,
+      widthPt: Math.max(12, b.rect.width * widthPt),
+      heightPt: Math.max(10, b.rect.height * heightPt),
+      fontSizePt: b.fontSizePt,
+      fontFamily: b.fontFamily,
+      bold: b.bold,
+      italic: b.italic,
+      colorHex: b.textColorHex || '#000000',
+    }));
+  }
+
+  if (page.runs.length > 0) {
+    const blocks = groupTextRunsIntoBlocks(page.runs, page.pageIndex, widthPt, heightPt);
+    return blocks.map((b) => ({
+      text: b.text,
+      leftPt: b.rect.x * widthPt,
+      topPt: b.rect.y * heightPt,
+      widthPt: Math.max(12, b.rect.width * widthPt),
+      heightPt: Math.max(10, b.rect.height * heightPt),
+      fontSizePt: b.fontSizePt,
+      fontFamily: b.fontFamily,
+      bold: b.bold,
+      italic: b.italic,
+      colorHex: b.textColorHex || '#000000',
+    }));
+  }
+
+  return [];
 }
 
 export interface StructuredParagraph {
@@ -260,14 +319,29 @@ export function buildStructuredLinesFromRuns(runs: readonly RawTextRun[]): Layou
       const trimmed = joined.trim();
       const first = lineRuns[0];
       const last = lineRuns[lineRuns.length - 1];
+      const leftPt = first.leftPt;
+      const rightPt = Math.max(first.leftPt + first.widthPt, last.leftPt + last.widthPt);
+      const topPt = Math.min(...lineRuns.map((r) => r.topPt));
+      const heightPt = Math.max(
+        ...lineRuns.map((r) => r.heightPt || (r.fontSizePt * 1.2)),
+        10
+      );
+      const widthPt = Math.max(10, rightPt - leftPt);
+      const fontFamily = first.fontFamily;
+
       return {
         baselineYPt: first.baselineYPt,
-        leftPt: first.leftPt,
-        rightPt: Math.max(first.leftPt + first.widthPt, last.leftPt + last.widthPt),
+        leftPt,
+        topPt,
+        rightPt,
+        widthPt,
+        heightPt,
         fontSizePt: median(
           lineRuns.map((r) => r.fontSizePt),
           10.5
         ),
+        fontFamily,
+        colorHex: undefined,
         bold: totalLen > 0 && boldWeight / totalLen >= 0.65,
         italic: totalLen > 0 && italicWeight / totalLen >= 0.65,
         text: trimmed,

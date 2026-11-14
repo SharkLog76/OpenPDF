@@ -15,6 +15,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 | **REQ-20261114-05** | 2026-11-14 | Présentation visuelle du projet (README vitrine, captures d'écran réelles HD de l'application) | COMPLÉTÉ | `0ebd819` | `README.md`, `docs/assets/screenshots/`, `App.tsx` |
 | **REQ-20261114-06** | 2026-11-14 | Intégration de la signature de code SignPath Foundation (CI/CD GitHub Actions) | COMPLÉTÉ | `d31fc0f` | `.github/workflows/release.yml`, `docs/development/code-signing-signpath.md` |
 | **REQ-20261114-07** | 2026-11-14 | Audit complet et correction exhaustive des vulnérabilités de sécurité (App, Crypto, Tauri/Rust, Dépendances, CI) | COMPLÉTÉ | `4094831` | `package.json`, `src/`, `src-tauri/`, `.github/workflows/`, `tests/`, `docs/` |
+| **REQ-20261114-08** | 2026-11-14 | Refonte haute fidélité du module d'export (Word, PowerPoint, HTML) pour conformité absolue au PDF (mise en page, polices, images) | COMPLÉTÉ | `e2adc2c` | `src/domain/converter.ts`, `src/providers/converter/`, `src/application/converter/`, `src/adapters/ui/components/ExportFormatsModal.tsx`, `tests/`, `.github/workflows/` |
 
 ---
 
@@ -186,4 +187,34 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
   - Commande de rollback si nécessaire : `git reset --hard 4094831` (ou `git revert HEAD`)
 - **Résultat de Vérification** :
   - Exécution complète `npm.cmd test`, `npm.cmd run typecheck`, `npm.cmd audit`, `cargo test --manifest-path src-tauri/Cargo.toml`, `npm.cmd run build` validée.
+- **Statut** : **COMPLÉTÉ**
+
+---
+
+### REQ-20261114-08 : Refonte haute fidélité du module d'export (Word, PowerPoint, HTML, Office)
+- **Demandeur** : Utilisateur
+- **Date** : 14/11/2026 06:50
+- **Besoin** :
+  1. Rendre les exports Word (.docx), PowerPoint (.pptx) et HTML (.html) conformes et strictement IDENTIQUES au document PDF d'origine (géométrie, dimensions des pages, polices, tailles, couleurs, images, arrière-plans et mise en page).
+  2. Implémenter le mode "Mise en page exacte & fidélité visuelle" par défaut pour Word (sections avec dimensions exactes en twips, marges nulles, arrière-plan graphique HD plein format et blocs de texte éditables positionnés au millimètre via `framePr`).
+  3. Implémenter le mode "Diapositives fidèles & Texte éditable" pour PowerPoint (visuel de diapositive HD + zones de texte éditables superposées à leurs coordonnées exactes avec typographie préservée).
+  4. Implémenter le mode "Feuille PDF haute fidélité" pour HTML (dimensions exactes par page, arrière-plan graphique HD, couche de texte sélectionnable positionnée en CSS absolu et feuille de style d'impression `@media print`).
+  5. Mettre à jour l'interface `ExportFormatsModal` pour offrir les options de fidélité recommandées par défaut tout en conservant le mode flux continu alternatif.
+- **Périmètre & Fichiers** :
+  - `src/domain/converter.ts`
+  - `src/providers/converter/docxExporter.ts`
+  - `src/providers/converter/pptxExporter.ts`
+  - `src/providers/converter/webAndImageExporter.ts`
+  - `src/application/converter/DocumentExportService.ts`
+  - `src/adapters/ui/components/ExportFormatsModal.tsx`
+  - `tests/converter-export.test.ts`
+  - `docs/architecture/modules-and-providers.md`
+- **Point de Restauration / Réversibilité** :
+  - Commit de référence (`BASE_COMMIT`) : `e2adc2c`
+  - Commande de rollback si nécessaire : `git reset --hard e2adc2c` (ou `git revert HEAD`)
+- **Résultat de Vérification** :
+  - 8 fichiers de tests et 49 tests automatisés validés (`npm.cmd test`).
+  - Validation du typage statique TypeScript (`npm.cmd run typecheck` - 0 erreur).
+  - Validation du build de production (`npm.cmd run build` - 5.07s).
+  - Nettoyage des alertes d'annotation Node 20 en CI (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`).
 - **Statut** : **COMPLÉTÉ**
