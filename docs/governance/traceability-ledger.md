@@ -13,6 +13,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 | **REQ-20261114-03** | 2026-11-14 | Intégration de la licence GPL-3.0 et synchronisation bi-directionnelle avec GitHub | COMPLÉTÉ | `0b552a9` | `LICENSE`, `package.json`, remotes |
 | **REQ-20261114-04** | 2026-11-14 | Professionnalisation du dépôt : README vitrine, Changelog officiel et pipeline Releases GitHub Actions | COMPLÉTÉ | `4645f42` | `README.md`, `CHANGELOG.md`, `.github/workflows/` |
 | **REQ-20261114-05** | 2026-11-14 | Présentation visuelle du projet (README vitrine, captures d'écran réelles HD de l'application) | COMPLÉTÉ | `0ebd819` | `README.md`, `docs/assets/screenshots/`, `App.tsx` |
+| **REQ-20261114-06** | 2026-11-14 | Intégration de la signature de code SignPath Foundation (CI/CD GitHub Actions) | COMPLÉTÉ | `d31fc0f` | `.github/workflows/release.yml`, `docs/development/code-signing-signpath.md` |
 
 ---
 
@@ -135,5 +136,28 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 - **Résultat de Vérification** :
   - Screenshots capturés avec succès via Chrome Headless et validés visuellement.
   - Tests unitaires (47/47) et typecheck TypeScript validés sans erreur.
+  - Synchronisation avec le dépôt bare NAS et GitHub.
+- **Statut** : **COMPLÉTÉ**
+
+---
+
+### REQ-20261114-06 : Intégration de la signature de code SignPath Foundation
+- **Demandeur** : Utilisateur
+- **Date** : 14/11/2026 06:08
+- **Besoin** :
+  1. Préparer l'infrastructure de signature de code Authenticode gratuite pour projet open source via SignPath Foundation.
+  2. Rédiger le guide d'onboarding complet pour la candidature et la configuration SignPath.io (`docs/development/code-signing-signpath.md`).
+  3. Mettre à jour le pipeline GitHub Actions (`.github/workflows/release.yml`) pour soumettre automatiquement les installeurs NSIS `.exe` et `.msi` à SignPath, attendre le scellement HSM et publier les binaires signés avec empreintes SHA-256.
+  4. Garantir un fallback transparent si les secrets ne sont pas encore renseignés.
+- **Périmètre & Fichiers** :
+  - `.github/workflows/release.yml`
+  - `docs/development/code-signing-signpath.md`
+  - `docs/governance/traceability-ledger.md`
+- **Point de Restauration / Réversibilité** :
+  - Commit de référence : `d31fc0f`
+  - Commande de rollback si nécessaire : `git reset --hard d31fc0f`
+- **Résultat de Vérification** :
+  - Workflow validé avec détection conditionnelle du secret `SIGNPATH_API_TOKEN`.
+  - Documentation pas-à-pas fournie.
   - Synchronisation avec le dépôt bare NAS et GitHub.
 - **Statut** : **COMPLÉTÉ**
