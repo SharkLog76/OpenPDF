@@ -96,6 +96,7 @@ import {
   detachTabToNewWindowTauri,
   forceCloseCurrentWindowTauri,
   isTauriRuntime,
+  openExternalUrl,
   openPathInNewWindowTauri,
   overwritePdfAtPathTauri,
   pickOpenPdfTauri,
@@ -109,6 +110,8 @@ import {
   syncDesktopWindowTitle,
   takeWindowLaunchPayloadTauri,
 } from '../host/tauriBridge.ts';
+import { UpdateCheckService } from '../../application/updater/UpdateCheckService.ts';
+import type { AppUpdateInfo } from '../../domain/updater.ts';
 import { AcrobatMenuBar, type AcrobatAtelierId } from './components/AcrobatMenuBar.tsx';
 import { DocumentTabBar, type DocumentTabItem } from './components/DocumentTabBar.tsx';
 import { ExportFormatsModal } from './components/ExportFormatsModal.tsx';
@@ -123,6 +126,7 @@ import {
   ShortcutsModal,
 } from './components/SaveAndDialogs.tsx';
 import { SignatureVaultPanel, type RightTabId } from './components/SignatureVaultPanel.tsx';
+import { UpdateNotificationModal } from './components/UpdateNotificationModal.tsx';
 
 interface WorkspaceTab {
   readonly id: string;
@@ -234,6 +238,11 @@ export const App: React.FC = () => {
 
   // Status / Error banner
   const [banner, setBanner] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+
+  // Auto-Update State & Service
+  const updateService = useMemo(() => new UpdateCheckService(), []);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
 
   // Signature Vault & Global P12 identity
   const [vaultAssets, setVaultAssets] = useState<VisualSignatureAsset[]>([]);
@@ -461,6 +470,50 @@ export const App: React.FC = () => {
       });
     }
   }, [handleOpenTauriPath, openFromBytes]);
+
+  // Background check for updates on application startup
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void updateService.checkForUpdates().then((res) => {
+        if (res.ok && res.value.isAvailable) {
+          setAvailableUpdate(res.value);
+          setShowUpdateModal(true);
+        }
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [updateService]);
+
+  const handleCheckUpdates = useCallback(
+    async (isManual: boolean = false) => {
+      if (isManual) {
+        setBanner({ kind: 'info', text: 'Recherche de mise à jour sur GitHub...' });
+      }
+      const res = await updateService.checkForUpdates(isManual);
+      if (!res.ok) {
+        if (isManual) {
+          setBanner({ kind: 'error', text: res.error.message });
+        }
+        return;
+      }
+      if (res.value.isAvailable) {
+        setAvailableUpdate(res.value);
+        setShowUpdateModal(true);
+        if (isManual) {
+          setBanner({
+            kind: 'info',
+            text: `Nouvelle version OpenPDF v${res.value.latestVersion} disponible !`,
+          });
+        }
+      } else if (isManual) {
+        setBanner({
+          kind: 'info',
+          text: `OpenPDF est à jour (version v${res.value.currentVersion}).`,
+        });
+      }
+    },
+    [updateService]
+  );
 
   // Listen for OS Explorer drag-and-drop & secondary single-instance open requests
   useEffect(() => {
@@ -1830,6 +1883,9 @@ export const App: React.FC = () => {
           if (activeTab) void handleDetachTab(activeTab.id);
         }}
         onOpenProperties={() => setShowPropertiesModal(true)}
+        onCheckUpdates={() => void handleCheckUpdates(true)}
+        updateInfo={availableUpdate}
+        onOpenUpdateModal={() => setShowUpdateModal(true)}
         onCloseDocument={() => {
           if (activeTab) handleRequestCloseTab(activeTab.id);
         }}
@@ -2622,6 +2678,15 @@ export const App: React.FC = () => {
           lastSavedLabel={lastExportSavedLabel}
           onRunExport={handleRunFormatExport}
           onClose={() => setShowExportModal(false)}
+        />
+      )}
+
+      {/* Auto-Update Notification Modal */}
+      {showUpdateModal && availableUpdate && (
+        <UpdateNotificationModal
+          updateInfo={availableUpdate}
+          onClose={() => setShowUpdateModal(false)}
+          onOpenUrl={(url) => void openExternalUrl(url)}
         />
       )}
 

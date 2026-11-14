@@ -36,6 +36,44 @@ async fn write_binary_file_atomic(path: String, bytes: Vec<u8>) -> Result<Writte
         .map_err(|e| format!("ConversionFailed: Echec ecriture export ({})", e))?
 }
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Protocole invalide pour URL externe".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let system_root = std::env::var_os("SystemRoot")
+            .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+        let explorer_exe = std::path::Path::new(&system_root).join("explorer.exe");
+        if explorer_exe.is_file() {
+            std::process::Command::new(explorer_exe)
+                .arg(&url)
+                .spawn()
+                .map_err(|e| format!("Echec ouverture URL : {}", e))?;
+            return Ok(());
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Echec ouverture URL : {}", e))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Echec ouverture URL : {}", e))?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -73,7 +111,8 @@ pub fn run() {
             window_manager::open_path_in_new_window,
             window_manager::close_window_unconditionally,
             default_pdf::check_pdf_default_status,
-            default_pdf::register_and_open_default_pdf_settings
+            default_pdf::register_and_open_default_pdf_settings,
+            open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running OpenPDF Tauri application");

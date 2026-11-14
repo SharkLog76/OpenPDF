@@ -1,6 +1,6 @@
 [package]
 name = "openpdf"
-version = "0.1.1"
+version = "0.1.2"
 description = "OpenPDF — Studio PDF local-first (lecture, édition, signature, conversion)"
 authors = ["OpenPDF"]
 edition = "2021"

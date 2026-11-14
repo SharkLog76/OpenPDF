@@ -50,14 +50,15 @@ flowchart TD
 - Exécuter la suite de tests automatisés (`npm.cmd test`).
 - Vérifier que la compilation TypeScript est propre (`npx.cmd tsc --noEmit`).
 
-### Étape 5 : Clôture, Maintenance Documentaire & Synchronisation NAS
+### Étape 5 : Clôture, Maintenance Documentaire, Release & Synchronisation NAS
 - Mettre à jour la documentation d'architecture si un contrat, un flux ou une structure a évolué (la documentation reste le reflet fidèle du code).
 - Mettre à jour le statut dans le registre de traçabilité (`Statut: COMPLÉTÉ`).
-- Produire un commit normé (Conventional Commits, ex. `feat:`, `fix:`, `docs:`, `refactor:`).
-- Pousser le commit vers le dépôt bare du NAS :
-  ```powershell
-  git push origin <branche>
-  ```
+- **Cycle de Release Automatique** : Dès qu'une évolution fonctionnelle, ergonomique ou de sécurité est validée et testée :
+  1. Incrémenter le numéro de version selon SemVer dans `package.json`, `src-tauri/tauri.conf.json` et `src-tauri/Cargo.toml`.
+  2. Documenter le `CHANGELOG.md` avec les ajouts, correctifs et impact utilisateur.
+  3. Produire un commit normé (Conventional Commits, ex. `feat:`, `fix:`, `docs:`, `refactor:`).
+  4. Créer le tag Git correspondant (`vX.Y.Z`).
+  5. Pousser la branche et le tag vers le NAS (`origin`) et GitHub (`github` / `origin`) pour déclencher la CI/CD et publier les installeurs exécutables.
 
 ---
 

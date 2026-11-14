@@ -16,6 +16,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 | **REQ-20261114-06** | 2026-11-14 | Intégration de la signature de code SignPath Foundation (CI/CD GitHub Actions) | COMPLÉTÉ | `d31fc0f` | `.github/workflows/release.yml`, `docs/development/code-signing-signpath.md` |
 | **REQ-20261114-07** | 2026-11-14 | Audit complet et correction exhaustive des vulnérabilités de sécurité (App, Crypto, Tauri/Rust, Dépendances, CI) | COMPLÉTÉ | `4094831` | `package.json`, `src/`, `src-tauri/`, `.github/workflows/`, `tests/`, `docs/` |
 | **REQ-20261114-08** | 2026-11-14 | Refonte haute fidélité du module d'export (Word, PowerPoint, HTML) pour conformité absolue au PDF (mise en page, polices, images) | COMPLÉTÉ | `e2adc2c` | `src/domain/converter.ts`, `src/providers/converter/`, `src/application/converter/`, `src/adapters/ui/components/ExportFormatsModal.tsx`, `tests/`, `.github/workflows/` |
+| **REQ-20261114-09** | 2026-11-14 | Système de détection automatique des mises à jour (GitHub Releases), notification in-app, publication release v0.1.2 et mémorisation du cycle de release | COMPLÉTÉ | `d861bbc` | `src/domain/updater.ts`, `src/application/updater/`, `src/adapters/ui/`, `src-tauri/`, `package.json`, `CHANGELOG.md`, `AGENTS.md` |
 
 ---
 
@@ -217,4 +218,34 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
   - Validation du typage statique TypeScript (`npm.cmd run typecheck` - 0 erreur).
   - Validation du build de production (`npm.cmd run build` - 5.07s).
   - Nettoyage des alertes d'annotation Node 20 en CI (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`).
+- **Statut** : **COMPLÉTÉ**
+
+---
+
+### REQ-20261114-09 : Détection automatique des mises à jour, notification in-app et chaîne de release v0.1.2
+- **Demandeur** : Utilisateur
+- **Date** : 14/11/2026 07:12
+- **Besoin** :
+  1. Implémenter un système de détection automatique des nouvelles versions disponibles sur GitHub Releases (`SharkLog76/OpenPDF`).
+  2. Proposer une notification / modale in-app permettant à l'utilisateur de consulter les nouveautés et de télécharger/installer la mise à jour en un clic.
+  3. Mémoriser dans les règles de gouvernance (`AGENTS.md` et `project-rules.md`) l'obligation de publication de release à chaque évolution substantielle validée.
+  4. Préparer et publier la release v0.1.2 avec compilation des nouveaux installeurs Windows.
+- **Périmètre & Fichiers** :
+  - `src/domain/updater.ts`
+  - `src/application/updater/UpdateCheckService.ts`
+  - `src/adapters/ui/components/UpdateNotificationModal.tsx`
+  - `src/adapters/ui/components/TopBar.tsx`
+  - `src/adapters/ui/App.tsx`
+  - `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`
+  - `package.json`, `CHANGELOG.md`, `AGENTS.md`, `docs/governance/project-rules.md`
+  - `tests/updater.test.ts`
+- **Point de Restauration / Réversibilité** :
+  - Commit de référence (`BASE_COMMIT`) : `d861bbc`
+  - Commande de rollback si nécessaire : `git reset --hard d861bbc`
+- **Résultat de Vérification** :
+  - 9 fichiers de tests et 54 tests validés (`npm.cmd test`).
+  - Validation du typage statique TypeScript (`npm.cmd run typecheck` - 0 erreur).
+  - Validation des 9 tests natifs Rust (`cargo test --manifest-path src-tauri/Cargo.toml`).
+  - Validation du build de production (`npm.cmd run build` - 5.20s).
+  - Tag git `v0.1.2` créé et synchronisé sur le NAS (`origin`) et GitHub (`github`).
 - **Statut** : **COMPLÉTÉ**

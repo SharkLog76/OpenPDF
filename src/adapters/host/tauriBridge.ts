@@ -379,3 +379,21 @@ export async function registerAndOpenDefaultPdfSettingsTauri(
     });
   }
 }
+
+export async function openExternalUrl(
+  url: string,
+  deps: TauriBridgeDeps = DEFAULT_DEPS
+): Promise<void> {
+  if (!/^https?:\/\//i.test(url)) return;
+  if (deps.isTauri()) {
+    try {
+      await deps.invokeFn('open_external_url', { url });
+      return;
+    } catch {
+      // Fallback to window.open
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}

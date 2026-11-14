@@ -11,13 +11,16 @@ import {
   Redo2,
   RotateCw,
   Save,
+  Sparkles,
   Sun,
   Undo2,
   Wrench,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import type { AppUpdateInfo } from '../../../domain/updater.ts';
 import type { DisplayRotation, ViewMode } from '../../../domain/viewer.ts';
+import { openExternalUrl } from '../../../adapters/host/tauriBridge.ts';
 import { hasWritableDiskOrigin, type FileOriginHandle } from '../../../providers/filesystem/boundedFileSystem.ts';
 
 export type AcrobatAtelierId =
@@ -83,6 +86,9 @@ interface AcrobatMenuBarProps {
   readonly onOpenShortcuts: () => void;
   readonly onOpenReaInspector: () => void;
   readonly onJumpPage: (pageIndex: number) => void;
+  readonly onCheckUpdates?: () => void;
+  readonly updateInfo?: AppUpdateInfo | null;
+  readonly onOpenUpdateModal?: () => void;
 }
 
 export const AcrobatMenuBar: React.FC<AcrobatMenuBarProps> = ({
@@ -100,6 +106,9 @@ export const AcrobatMenuBar: React.FC<AcrobatMenuBarProps> = ({
   currentPage,
   totalPages,
   viewMode,
+  onCheckUpdates,
+  updateInfo,
+  onOpenUpdateModal,
   onOpenFile,
   onNewBlank,
   onOpenDemo,
@@ -286,6 +295,12 @@ export const AcrobatMenuBar: React.FC<AcrobatMenuBarProps> = ({
     Aide: [
       { label: 'Raccourcis clavier', onClick: onOpenShortcuts },
       { label: 'Empreinte du Fichier & Propriétés', disabled: !hasDocument, onClick: onOpenReaInspector },
+      { separator: true },
+      { label: 'Vérifier les mises à jour…', onClick: onCheckUpdates },
+      {
+        label: 'Historique des releases (GitHub)',
+        onClick: () => void openExternalUrl('https://github.com/SharkLog76/OpenPDF/releases'),
+      },
     ],
   };
 
@@ -338,6 +353,18 @@ export const AcrobatMenuBar: React.FC<AcrobatMenuBarProps> = ({
         </div>
 
         <div className="menubar-right">
+          {updateInfo && updateInfo.isAvailable && onOpenUpdateModal && (
+            <button
+              type="button"
+              className="update-badge-btn"
+              title={`Nouvelle version ${updateInfo.latestVersion} disponible ! Cliquez pour mettre à jour.`}
+              onClick={onOpenUpdateModal}
+            >
+              <Sparkles size={12} />
+              <span>v{updateInfo.latestVersion} disponible</span>
+            </button>
+          )}
+
           {hasDocument && docName && (
             <div
               className="doc-pill"

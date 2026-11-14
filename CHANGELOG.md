@@ -5,6 +5,28 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 
 ---
 
+## [0.1.2] - 2026-11-14
+
+### ✨ Nouveautés & Évolutions Majeures
+- **Détection Automatique des Mises à Jour (Auto-Update)** :
+  - Détection automatique au démarrage de nouvelles versions publiées sur GitHub Releases (`SharkLog76/OpenPDF`).
+  - Notification et modale interactive intégrée permettant de consulter les notes de version et de télécharger/installer la mise à jour en un clic.
+  - Option manuelle « Vérifier les mises à jour… » dans le menu Aide d'AcrobatMenuBar avec badge dynamique lors de la disponibilité d'une nouvelle version.
+- **Refonte Haute Fidélité des Exports Multi-Formats** :
+  - **Word (.docx)** : Mode par défaut `exact-layout` garantissant une conformité absolue au PDF (sections aux dimensions exactes en twips, marges nulles, arrière-plan graphique HD plein format et boîtes de texte flottantes `w:framePr` positionnées à leurs coordonnées d'origine avec typographie et couleurs préservées). Mode alternatif `flowing-text` conservé.
+  - **PowerPoint (.pptx)** : Mode par défaut `exact-slides` avec diapositive hybride associant le visuel plein format HD (`<p:pic>`) et les boîtes de texte vectorielles éditables (`<p:sp>`) superposées avec typographie préservée et transcription en notes de présentation.
+  - **HTML (.html)** : Planches PDF haute fidélité (`.pdf-sheet`) avec dimensions réelles en points, arrière-plan graphique HD, couche de texte en positionnement absolu et feuille de style d'impression `@media print`.
+- **Règle Permanente de Gouvernance** :
+  - Enregistrement dans les règles projet de l'obligation de publication automatique d'une release GitHub (SemVer, tag, compilation CI/CD) dès que des modifications substantielles sont validées.
+
+### 🔒 Sécurité & Robustesse
+- **Caviardage & Biffure Destructifs** : Élimination physique définitive des sous-couches textuelles et rastérisation destructive des pages modifiées pour garantir la confidentialité totale.
+- **Protection contre les Injections CSV** : Neutralisation systématique des préfixes de formules (`=`, `@`, `+`, `-`) lors des exports tabulaires tout en préservant les nombres négatifs.
+- **Protection Mémoire & Clés Privées** : Remise à zéro explicite (`.fill(0)`) des tampons mémoire de certificats PKCS#12, révocation des Blob URLs et suppression des fuites de mots de passe.
+- **CI/CD & Actions GitHub** : Suppression des variables obsolètes de transition Node 20 pour une exécution propre et suppression des avertissements d'annotation sur les releases.
+
+---
+
 ## [0.1.1] - 2026-11-14
 
 ### ✨ Ajouts (Features)

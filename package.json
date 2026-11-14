@@ -1,6 +1,6 @@
 {
   "name": "openpdf",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "GPL-3.0-or-later",
   "description": "Local-first PDF reader, editor, and cryptographic signer built with REA methodology",
   "type": "module",

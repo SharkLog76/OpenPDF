@@ -25,6 +25,10 @@ Toute intervention sur le dépôt doit respecter le cadre de gouvernance opérat
    ```powershell
    git push origin main
    ```
+5. **Cycle de Release Automatique (Obligatoire)** : Dès qu'une évolution fonctionnelle, ergonomique ou de sécurité est validée et testée, l'agent doit systématiquement :
+   - Incrémenter le numéro de version selon SemVer (`patch` pour correctifs/améliorations, `minor` pour nouvelles fonctionnalités) dans `package.json`, `src-tauri/tauri.conf.json` et `src-tauri/Cargo.toml`.
+   - Documenter le `CHANGELOG.md` avec les nouveautés, correctifs et impact utilisateur.
+   - Créer le tag Git correspondant (`vX.Y.Z`) et le pousser vers le NAS et GitHub pour déclencher la chaîne CI/CD de release et publication des installeurs Windows.
 
 ---
 
