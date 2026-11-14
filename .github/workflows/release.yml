@@ -78,17 +78,24 @@ jobs:
       - name: Préparation des fichiers d'installation pour la Release
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path ./release-assets
-          if (Test-Path ./signed-output) {
+          New-Item -ItemType Directory -Force -Path ./release-assets | Out-Null
+          $signedFiles = if (Test-Path ./signed-output) { Get-ChildItem -Path ./signed-output -File -Recurse } else { @() }
+          if ($signedFiles.Count -gt 0) {
             Write-Host "Utilisation des binaires officiellement signés par SignPath Foundation..."
-            Copy-Item -Path ./signed-output/* -Destination ./release-assets/ -Recurse
+            $signedFiles | Copy-Item -Destination ./release-assets/
           } else {
             Write-Host "SignPath en attente de configuration : utilisation des binaires compilés..."
-            Copy-Item -Path src-tauri/target/release/bundle/nsis/*.exe -Destination ./release-assets/
-            Copy-Item -Path src-tauri/target/release/bundle/msi/*.msi -Destination ./release-assets/
+            Get-ChildItem -Path src-tauri/target/release/bundle -Include *.exe,*.msi -Recurse -File -ErrorAction SilentlyContinue | Copy-Item -Destination ./release-assets/
           }
           Write-Host "Calcul des empreintes SHA-256..."
-          Get-FileHash ./release-assets/* -Algorithm SHA256 | Out-File -FilePath ./release-assets/checksums-sha256.txt
+          $files = Get-ChildItem -Path ./release-assets -File
+          $checksumLines = @()
+          foreach ($f in $files) {
+            $h = Get-FileHash -Path $f.FullName -Algorithm SHA256
+            $checksumLines += ($h.Hash.ToLower() + "  " + $f.Name)
+          }
+          $checksumLines | Set-Content -Path ./release-assets/checksums-sha256.txt -Encoding utf8
+          Write-Host "Fichiers prêts pour la publication de la Release :"
           Get-ChildItem ./release-assets/
 
       - name: Publication de la GitHub Release
