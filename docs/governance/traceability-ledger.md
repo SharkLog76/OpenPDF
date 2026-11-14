@@ -247,5 +247,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
   - Validation du typage statique TypeScript (`npm.cmd run typecheck` - 0 erreur).
   - Validation des 9 tests natifs Rust (`cargo test --manifest-path src-tauri/Cargo.toml`).
   - Validation du build de production (`npm.cmd run build` - 5.20s).
-  - Tag git `v0.1.2` créé et synchronisé sur le NAS (`origin`) et GitHub (`github`).
+  - Correctif apporté à la génération des empreintes SHA-256 dans le workflow de release (`d976154`) pour éviter les conflits de verrouillage de fichier sous PowerShell.
+  - Tag git `v0.1.2` recréé et synchronisé sur le NAS (`origin`) et GitHub (`github`).
+  - Pipeline GitHub Actions déclenché et en cours d'exécution pour la génération des artefacts d'installation (`OpenPDF_0.1.2_x64-setup.exe`, `OpenPDF_0.1.2_x64_en-US.msi`, `checksums-sha256.txt`).
 - **Statut** : **COMPLÉTÉ**
