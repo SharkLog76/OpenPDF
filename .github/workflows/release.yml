@@ -1,0 +1,69 @@
+name: Publication Automatisée des Releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release Windows (Tauri v2)
+    runs-on: windows-latest
+
+    steps:
+      - name: Récupération du code source
+        uses: actions/checkout@v4
+
+      - name: Configuration de l'environnement Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Installation de la toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache des dépendances Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Installation des dépendances NPM
+        run: npm ci
+
+      - name: Exécution des tests automatisés
+        run: npm run test
+
+      - name: Compilation du frontend (Vite / TypeScript)
+        run: npm run build
+
+      - name: Compilation et publication de la Release Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'OpenPDF ${{ github.ref_name }}'
+          releaseBody: |
+            Bienvenue dans la version **${{ github.ref_name }}** d'**OpenPDF** ! 🎉
+            
+            ### 📥 Fichiers d'installation disponibles ci-dessous :
+            - **`OpenPDF_${{ github.ref_name }}_x64-setup.exe`** : Installeur standard NSIS (recommandé pour Windows, aucune élévation de privilèges requise).
+            - **`OpenPDF_${{ github.ref_name }}_x64_en-US.msi`** : Package MSI pour déploiement en entreprise ou installation automatisée.
+            
+            ### 📜 Détail des changements et nouveautés :
+            Pour consulter l'historique complet et l'explication de chaque évolution, référez-vous au [Journal des Modifications (CHANGELOG.md)](https://github.com/SharkLog76/OpenPDF/blob/main/CHANGELOG.md).
+          releaseDraft: false
+          prerelease: false

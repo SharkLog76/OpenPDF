@@ -1,0 +1,32 @@
+name: Intégration Continue (CI)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Tests & Validation TypeScript
+    runs-on: windows-latest
+
+    steps:
+      - name: Récupération du code source
+        uses: actions/checkout@v4
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Installation des dépendances NPM
+        run: npm ci
+
+      - name: Exécution des tests unitaires et d'intégration
+        run: npm run test
+
+      - name: Vérification du typage statique TypeScript
+        run: npm run typecheck

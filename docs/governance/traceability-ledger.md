@@ -11,6 +11,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 | **REQ-20261114-01** | 2026-11-14 | Initialisation Git et push sur dépôt bare NAS | COMPLÉTÉ | Commit initial (`76784e5`) | Dépôt entier |
 | **REQ-20261114-02** | 2026-11-14 | Mise en place de la gouvernance projet & documentation d'architecture détaillée | COMPLÉTÉ | `76784e5` | `docs/`, `AGENTS.md` |
 | **REQ-20261114-03** | 2026-11-14 | Intégration de la licence GPL-3.0 et synchronisation bi-directionnelle avec GitHub | COMPLÉTÉ | `0b552a9` | `LICENSE`, `package.json`, remotes |
+| **REQ-20261114-04** | 2026-11-14 | Professionnalisation du dépôt : README vitrine, Changelog officiel et pipeline Releases GitHub Actions | COMPLÉTÉ | `4645f42` | `README.md`, `CHANGELOG.md`, `.github/workflows/` |
 
 ---
 
@@ -29,28 +30,6 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 - **Résultat de Vérification** :
   - `git push -u origin main` réussi.
   - Vérification distante : `HEAD` pointé sur `refs/heads/main` avec le commit `76784e5`.
-- **Statut** : **COMPLÉTÉ**
-
----
-
-### REQ-20261114-03 : Intégration de la licence GPL-3.0 et synchronisation bi-directionnelle GitHub
-- **Demandeur** : Utilisateur
-- **Date** : 14/11/2026 04:45
-- **Besoin** :
-  1. Résoudre le rejet de push sur `https://github.com/alexandrenoury/OpenPDF.git` dû au commit initial créé par GitHub.
-  2. Intégrer la licence officielle GNU GPL v3.0 dans l'arbre local et mettre à jour `package.json`.
-  3. Pousser simultanément sur le dépôt bare du NAS et sur GitHub.
-- **Périmètre & Fichiers** :
-  - `LICENSE`
-  - `package.json`
-  - `.git/config` (remotes `origin` et `github`)
-- **Point de Restauration / Réversibilité** :
-  - Commit de référence : `0b552a9`
-  - Commande de rollback si nécessaire : `git reset --hard 0b552a9`
-- **Résultat de Vérification** :
-  - Fusion sans conflit de `github/main` (commit `59348c5`) avec `main`.
-  - Tests unitaires et typecheck vérifiés.
-  - Push synchronisé sur le NAS (`origin`) et GitHub (`github`).
 - **Statut** : **COMPLÉTÉ**
 
 ---
@@ -89,7 +68,7 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
 - **Demandeur** : Utilisateur
 - **Date** : 14/11/2026 04:45
 - **Besoin** :
-  1. Résoudre le rejet de push sur `https://github.com/alexandrenoury/OpenPDF.git` dû au commit initial créé par GitHub.
+  1. Résoudre le rejet de push sur `https://github.com/SharkLog76/OpenPDF.git` dû au commit initial créé par GitHub.
   2. Intégrer la licence officielle GNU GPL v3.0 dans l'arbre local et mettre à jour `package.json`.
   3. Pousser simultanément sur le dépôt bare du NAS et sur GitHub.
 - **Périmètre & Fichiers** :
@@ -103,4 +82,29 @@ Ce registre consigne chronologiquement l'ensemble des demandes utilisateurs exé
   - Fusion sans conflit de `github/main` (commit `59348c5`) avec `main`.
   - Tests unitaires et typecheck vérifiés.
   - Push synchronisé sur le NAS (`origin`) et GitHub (`github`).
+- **Statut** : **COMPLÉTÉ**
+
+---
+
+### REQ-20261114-04 : Professionnalisation du dépôt GitHub (Releases & Changelog)
+- **Demandeur** : Utilisateur
+- **Date** : 14/11/2026 05:16
+- **Besoin** :
+  1. Permettre aux utilisateurs de télécharger systématiquement la dernière version stable de l'application depuis GitHub.
+  2. Fournir un historique public complet des versions avec explicatifs détaillés des évolutions (Changelog / Release Notes).
+  3. Mettre en place un pipeline automatisé de publication des releases (GitHub Actions).
+  4. Créer un `README.md` vitrine à la racine avec badges, liens de téléchargement directs, aperçu des fonctionnalités et instructions d'installation.
+- **Périmètre & Fichiers** :
+  - `README.md` (page d'accueil du dépôt GitHub avec badges et liens directs vers `/releases/latest`)
+  - `CHANGELOG.md` (journal officiel suivant Keep a Changelog et SemVer)
+  - `.github/workflows/release.yml` (pipeline GitHub Actions pour compiler et attacher les installeurs NSIS `.exe` et `.msi` aux releases GitHub)
+  - `.github/workflows/ci.yml` (pipeline de validation continue des tests et du typage)
+  - `docs/governance/traceability-ledger.md`
+- **Point de Restauration / Réversibilité** :
+  - Commit de référence : `4645f42`
+  - Commande de rollback si nécessaire : `git reset --hard 4645f42`
+- **Résultat de Vérification** :
+  - Tests unitaires et d'intégration validés (`npm.cmd test`).
+  - Validation TypeScript sans erreur (`npm.cmd run typecheck`).
+  - Dépôt synchronisé avec le NAS bare repo et GitHub.
 - **Statut** : **COMPLÉTÉ**
