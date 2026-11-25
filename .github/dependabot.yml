@@ -1,0 +1,16 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # Tauri v2 (wry/tao/webkit2gtk/gtk) locks glib to ^0.18 (GTK3 on Linux).
+      # OpenPDF only targets Windows, so glib is not compiled into releases.
+      - dependency-name: "glib"
+        versions: [">= 0.19.0"]
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
